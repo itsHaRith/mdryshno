@@ -439,16 +439,17 @@ export class AudioManager {
       let lastErr = null;
       const clientRotationList = ['TVHTML5_SIMPLY_EMBEDDED', 'IOS', 'WEB_CREATOR', 'ANDROID', 'WEB'];
 
-      // Fetch dynamic Supabase session authentication (po_token, visitor_data)
-      const dbAuth = await fetchYoutubeAuth();
-      const poToken = dbAuth?.po_token || undefined;
-      const visitorData = dbAuth?.visitor_data || undefined;
+      // Fetch dynamic validated Supabase session authentication (cookieHeader, poToken, visitorData)
+      const auth = await getValidYouTubeAuth();
+      const poToken = auth.poToken;
+      const visitorData = auth.visitorData;
 
       for (const clientName of clientRotationList) {
         try {
           console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for: ${this.currentTrack.title}`);
           const info = await ytdl.getInfo(this.currentTrack.url, { 
             client: clientName,
+            agent: ytdlCookieAgent || undefined,
             poToken,
             visitorData
           });

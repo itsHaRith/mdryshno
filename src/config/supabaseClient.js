@@ -33,6 +33,23 @@ export const supabase = createClient(
 );
 
 /**
+ * Helper to check if a string contains placeholder/invalid credentials
+ */
+function isInvalidPlaceholder(str) {
+  if (!str || typeof str !== 'string') return true;
+  const lower = str.toLowerCase();
+  return (
+    lower.includes('your_cookie') ||
+    lower.includes('your_po_token') ||
+    lower.includes('your_visitor') ||
+    lower.includes('placeholder') ||
+    lower.includes('xxxx') ||
+    lower.includes('ضع_هنا') ||
+    str.trim().length < 15
+  );
+}
+
+/**
  * Fetches YouTube authentication session parameters from Supabase (youtube_auth table).
  */
 export async function fetchYoutubeAuth() {
@@ -47,6 +64,16 @@ export async function fetchYoutubeAuth() {
       console.warn('[Supabase] youtube_auth table query warning:', error.message);
       return null;
     }
+
+    if (data && isInvalidPlaceholder(data.cookie_header)) {
+      console.warn('[Supabase] Detected invalid/placeholder YouTube cookie in youtube_auth table. Falling back to persistent session credentials.');
+      return {
+        cookie_header: null,
+        po_token: isInvalidPlaceholder(data.po_token) ? null : data.po_token,
+        visitor_data: isInvalidPlaceholder(data.visitor_data) ? null : data.visitor_data
+      };
+    }
+
     return data;
   } catch (err) {
     console.warn('[Supabase] Failed to fetch youtube_auth session data:', err.message);
