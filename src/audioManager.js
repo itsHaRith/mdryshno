@@ -173,10 +173,17 @@ export class AudioManager {
       await this.connect();
     }
 
-    const type = await play.validate(query);
     const resolvedTracks = [];
 
     try {
+      let type;
+      try {
+        type = await play.validate(query);
+      } catch (validateErr) {
+        console.warn(`[AudioManager] play.validate failed: ${validateErr.message}. Fallback to text search...`);
+        type = 'search';
+      }
+
       if (type === 'yt_video') {
         const info = await play.video_basic_info(query);
         const video = info.video_details;
@@ -207,13 +214,35 @@ export class AudioManager {
         }
       } 
       else {
-        // Assume raw text query, perform search
-        const ytSearch = await play.search(query, { limit: 1 });
-        if (ytSearch && ytSearch.length > 0) {
-          const video = ytSearch[0];
-          resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-        } else {
-          throw new Error('No search results found.');
+        // Assume text query, try YouTube search first
+        try {
+          const ytSearch = await play.search(query, { limit: 1 });
+          if (ytSearch && ytSearch.length > 0) {
+            const video = ytSearch[0];
+            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+          } else {
+            throw new Error('No results on YouTube');
+          }
+        } catch (ytSearchErr) {
+          console.warn(`[AudioManager] YouTube search failed: ${ytSearchErr.message}. Trying SoundCloud search...`);
+          // Fallback to SoundCloud search directly
+          const scSearch = await play.search(query, {
+            source: { soundcloud: 'tracks' },
+            limit: 1
+          });
+          if (scSearch && scSearch.length > 0) {
+            const track = scSearch[0];
+            resolvedTracks.push(this.formatTrack(
+              track.title || 'SoundCloud Audio', 
+              track.url, 
+              (track.duration || 0) * 1000, 
+              track.artwork_url, 
+              track.publisher?.name || 'SoundCloud Artist', 
+              requesterTag
+            ));
+          } else {
+            throw new Error(`Both YouTube and SoundCloud search failed. YouTube error: ${ytSearchErr.message}`);
+          }
         }
       }
     } catch (err) {
