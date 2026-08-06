@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
+import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { AudioManager } from './audioManager.js';
 import { getPrefix, setPrefix, isAdmin } from './adminMiddleware.js';
 import { buildTutorialEmbed, buildAdminHelpEmbed } from './uiBuilder.js';
@@ -26,7 +26,7 @@ export class BotInstance {
       ]
     });
 
-    this.client.once('ready', async () => {
+    this.client.once(Events.ClientReady, async () => {
       console.log(`[BotInstance] Bot logged in: ${this.client.user.tag} (ID: ${this.config.id})`);
       
       // Instantiate and connect the audio manager

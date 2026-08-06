@@ -1,3 +1,5 @@
+process.env.SUPABASE_DISABLE_DEPRECATION_WARNING = 'true';
+
 import { fork } from 'child_process';
 import path from 'path';
 import { supabase } from './config/supabaseClient.js';

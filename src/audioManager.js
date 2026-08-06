@@ -34,7 +34,12 @@ let innertubeInstance = null;
 async function getInnertube() {
   if (!innertubeInstance) {
     try {
-      innertubeInstance = await Innertube.create();
+      const cookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
+      innertubeInstance = await Innertube.create({
+        cookie: cookieString,
+        generate_session_locally: true
+      });
+      console.log('[AudioManager] Authenticated Innertube instance created with local session generation.');
     } catch (e) {
       console.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
     }
