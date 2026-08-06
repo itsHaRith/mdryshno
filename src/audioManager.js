@@ -10,7 +10,6 @@ import {
 } from '@discordjs/voice';
 import play from 'play-dl';
 import ytdl from '@distube/ytdl-core';
-import youtubedl from 'youtube-dl-exec';
 import ffmpeg from 'ffmpeg-static';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
@@ -376,44 +375,27 @@ export class AudioManager {
     try {
       let resource;
       try {
-        console.log(`[AudioManager] Extracting direct YouTube audio stream via yt-dlp for: ${this.currentTrack.title}`);
-        const ytOutput = await youtubedl(this.currentTrack.url, {
-          dumpSingleJson: true,
-          noCheckCertificates: true,
-          noWarnings: true,
-          format: 'bestaudio'
+        console.log(`[AudioManager] Streaming YouTube audio via play-dl for: ${this.currentTrack.title}`);
+        const stream = await play.stream(this.currentTrack.url, {
+          discordPlayerCompatibility: true,
+          htmldata: false
+        });
+        resource = createAudioResource(stream.stream, {
+          inputType: stream.type,
+          inlineVolume: true
+        });
+      } catch (playDlErr) {
+        console.warn(`[AudioManager] play-dl stream failed for "${this.currentTrack.title}": ${playDlErr.message}. Fallback to ytdl-core...`);
+        const stream = ytdl(this.currentTrack.url, {
+          filter: 'audioonly',
+          highWaterMark: 1 << 25,
+          quality: 'highestaudio'
         });
 
-        if (ytOutput && ytOutput.url) {
-          console.log(`[AudioManager] Successfully extracted raw stream URL via yt-dlp.`);
-          resource = createAudioResource(ytOutput.url, {
-            inputType: StreamType.Arbitrary,
-            inlineVolume: true
-          });
-        } else {
-          throw new Error('yt-dlp did not return a valid stream URL');
-        }
-      } catch (ytdlpErr) {
-        console.warn(`[AudioManager] yt-dlp extraction failed for "${this.currentTrack.title}": ${ytdlpErr.message}. Fallback to ytdl-core...`);
-        try {
-          const stream = ytdl(this.currentTrack.url, {
-            filter: 'audioonly',
-            highWaterMark: 1 << 25,
-            quality: 'highestaudio'
-          });
-
-          resource = createAudioResource(stream, {
-            inputType: StreamType.Arbitrary,
-            inlineVolume: true
-          });
-        } catch (ytdlErr) {
-          console.warn(`[AudioManager] ytdl-core stream failed: ${ytdlErr.message}. Fallback to play-dl...`);
-          const stream = await play.stream(this.currentTrack.url);
-          resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
-            inlineVolume: true
-          });
-        }
+        resource = createAudioResource(stream, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: true
+        });
       }
 
       this.audioResource = resource;
