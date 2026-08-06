@@ -13,10 +13,20 @@ import ytdl from '@distube/ytdl-core';
 import ffmpeg from 'ffmpeg-static';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
+import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
 
 // Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
 if (ffmpeg) {
   process.env.FFMPEG_PATH = ffmpeg;
+}
+
+// Create authenticated ytdl agent using user session cookies
+let ytdlCookieAgent = null;
+try {
+  ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
+  console.log('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
+} catch (agentErr) {
+  console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
 }
 
 let innertubeInstance = null;
@@ -376,15 +386,31 @@ export class AudioManager {
     }
 
     try {
-      console.log(`[AudioManager] Streaming YouTube audio for: ${this.currentTrack.title} (${this.currentTrack.url})`);
-      const stream = await play.stream(this.currentTrack.url, {
-        discordPlayerCompatibility: true,
-        htmldata: false
-      });
-      resource = createAudioResource(stream.stream, {
-        inputType: stream.type,
-        inlineVolume: false
-      });
+      let resource;
+      try {
+        console.log(`[AudioManager] Streaming authenticated YouTube audio for: ${this.currentTrack.title} (${this.currentTrack.url})`);
+        const stream = ytdl(this.currentTrack.url, {
+          agent: ytdlCookieAgent || undefined,
+          filter: 'audioonly',
+          quality: 'highestaudio',
+          highWaterMark: 1 << 25
+        });
+
+        resource = createAudioResource(stream, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: false
+        });
+      } catch (ytdlErr) {
+        console.warn(`[AudioManager] Authenticated ytdl stream fallback to play.stream: ${ytdlErr.message}`);
+        const stream = await play.stream(this.currentTrack.url, {
+          discordPlayerCompatibility: true,
+          htmldata: false
+        });
+        resource = createAudioResource(stream.stream, {
+          inputType: stream.type,
+          inlineVolume: false
+        });
+      }
 
       this.audioResource = resource;
       if (this.audioResource.volume) {
