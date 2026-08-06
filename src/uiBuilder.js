@@ -1,21 +1,18 @@
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 
 /**
- * Generates a dynamic progress bar for the dashboard embed.
+ * Generates an ultra-stylish neon progress bar for the dashboard embed.
  */
-export function createProgressBar(currentMs, totalMs, size = 15) {
-  if (!totalMs || totalMs <= 0) return '`[🔘▬▬▬▬▬▬▬▬▬▬▬▬▬▬]`';
+export function createProgressBar(currentMs, totalMs, size = 16) {
+  if (!totalMs || totalMs <= 0) return '`▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ ⚡`';
   const progress = Math.max(0, Math.min(1, currentMs / totalMs));
-  const index = Math.round(progress * size);
-  let bar = '';
-  for (let i = 0; i <= size; i++) {
-    if (i === index) {
-      bar += '🔘';
-    } else {
-      bar += '▬';
-    }
-  }
-  return `\`[${bar}]\``;
+  const filledLength = Math.round(progress * size);
+  const emptyLength = size - filledLength;
+  
+  const filledBar = '▰'.repeat(filledLength);
+  const emptyBar = '▱'.repeat(emptyLength);
+  
+  return `\`${filledBar}${emptyBar} ⚡\``;
 }
 
 /**
@@ -34,7 +31,7 @@ export function formatDuration(ms) {
 }
 
 /**
- * Builds the interactive Player Dashboard.
+ * Builds the interactive Player Dashboard with large album covers and sleek aesthetics.
  */
 export function buildPlayerDashboard(track, statusInfo) {
   const { 
@@ -47,24 +44,40 @@ export function buildPlayerDashboard(track, statusInfo) {
 
   const totalMs = track.durationMS || 0;
   const progressText = createProgressBar(currentTime, totalMs);
-  const durationText = `${formatDuration(currentTime)} / ${formatDuration(totalMs)}`;
+  const durationText = `${formatDuration(currentTime)} ┆ ${formatDuration(totalMs)}`;
 
-  const loopAr = loopMode === 'none' ? 'معطل' : loopMode === 'track' ? 'أغنية' : 'قائمة';
+  const loopAr = loopMode === 'none' ? '❌ معطل' : loopMode === 'track' ? '🔂 أغنية واحدة' : '🔁 القائمة كاملة';
+  const volumeIcon = volume > 70 ? '🔊' : volume > 20 ? '🔉' : '🔈';
+  const stateBadge = isPlaying ? '▶️ **يعرض الآن بحيوية**' : '⏸️ **موقوف مؤقتاً**';
+
+  // Creative Neon Color: Electric Magenta when playing, Gold when paused
+  const themeColor = isPlaying ? 0xFF0055 : 0xFFB300;
 
   const embed = new EmbedBuilder()
-    .setColor(isPlaying ? 0x00FF87 : 0xFFB300)
-    .setTitle(`🎶 المشغل الحالي: ${track.title}`)
+    .setColor(themeColor)
+    .setAuthor({ 
+      name: '🎵 شبكة المشغلات الذكية • DASHBOARD 🎵', 
+      iconURL: 'https://cdn-icons-png.flaticon.com/512/3844/3844724.png' 
+    })
+    .setTitle(`✨ ${track.title}`)
     .setURL(track.url || null)
-    .setThumbnail(track.thumbnail || null)
-    .addFields(
-      { name: '👤 الفنان', value: track.artist || 'غير معروف', inline: true },
-      { name: '📥 بواسطة', value: track.requester || 'النظام', inline: true },
-      { name: '🔊 الصوت', value: `${volume}%`, inline: true },
-      { name: '🔄 التكرار', value: loopAr, inline: true },
-      { name: '📜 القائمة', value: `${queueLength} أغنية`, inline: true },
-      { name: '⏱️ الوقت', value: `${progressText}\n*${durationText}*`, inline: false }
+    .setDescription(
+      `>>> ${stateBadge}\n\n` +
+      `**⏱️ تقدم الأغنية:**\n${progressText}\n\`⏱️ [ ${durationText} ]\``
     )
-    .setFooter({ text: 'شبكة الموسيقى • أزرار تحكم تفاعلية' })
+    .addFields(
+      { name: '🎤 الفنان / القناة', value: `\`${track.artist || 'غير معروف'}\``, inline: true },
+      { name: '👤 طلب بواسطة', value: `${track.requester || 'النظام'}`, inline: true },
+      { name: `${volumeIcon} مستوى الصوت`, value: `\`${volume}%\``, inline: true },
+      { name: '🔄 نظام التكرار', value: `${loopAr}`, inline: true },
+      { name: '📜 قادم في القائمة', value: `\`${queueLength} أغنية\``, inline: true },
+      { name: '🌐 المصدر', value: `\`YouTube / Spotify HD\``, inline: true }
+    )
+    .setImage(track.thumbnail || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop')
+    .setFooter({ 
+      text: '🎧 تحكم كامل عبر الأزرار التفاعلية بالأسفل • شبكة الموسيقى الاحترافية',
+      iconURL: 'https://cdn-icons-png.flaticon.com/512/461/461238.png'
+    })
     .setTimestamp();
 
   // Action Row 1: Playback State Controls
@@ -77,25 +90,25 @@ export function buildPlayerDashboard(track, statusInfo) {
     
     new ButtonBuilder()
       .setCustomId('player_skip')
-      .setLabel('سكب')
+      .setLabel('التالي (سكب)')
       .setEmoji('⏭️')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_stop')
-      .setLabel('إيقاف')
+      .setLabel('إنهاء')
       .setEmoji('⏹️')
       .setStyle(ButtonStyle.Danger),
 
     new ButtonBuilder()
       .setCustomId('player_shuffle')
-      .setLabel('عشوائي')
+      .setLabel('خلط')
       .setEmoji('🔀')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_loop')
-      .setLabel(`تكرار: ${loopAr}`)
+      .setLabel('التكرار')
       .setEmoji('🔁')
       .setStyle(loopMode === 'none' ? ButtonStyle.Secondary : ButtonStyle.Success)
   );
@@ -104,25 +117,25 @@ export function buildPlayerDashboard(track, statusInfo) {
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('player_vol_down')
-      .setLabel('خفض الصوت')
+      .setLabel('خفض (-10)')
       .setEmoji('🔉')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_vol_up')
-      .setLabel('رفع الصوت')
+      .setLabel('رفع (+10)')
       .setEmoji('🔊')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_queue')
-      .setLabel('القائمة')
+      .setLabel('قائمة الانتظار')
       .setEmoji('📜')
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
       .setCustomId('player_dismiss')
-      .setLabel('إخفاء')
+      .setLabel('إخفاء اللوحة')
       .setEmoji('❌')
       .setStyle(ButtonStyle.Secondary)
   );
@@ -135,32 +148,27 @@ export function buildPlayerDashboard(track, statusInfo) {
  */
 export function buildTutorialEmbed() {
   const embed = new EmbedBuilder()
-    .setColor(0x7289DA)
-    .setTitle('👋 أهلاً بك في شبكة الموسيقى!')
-    .setDescription('دليل استخدام سريع لبوتات الموسيقى:')
+    .setColor(0x00F0FF)
+    .setTitle('👋 أهلاً بك في شبكة الموسيقى المتطورة!')
+    .setDescription('دليل الاستخدام السريع لبوتات الموسيقى الصوتية:')
     .addFields(
       { 
         name: '🎵 طريقة التشغيل', 
         value: '1. انضم للروم الصوتي الخاص بالبوت.\n' +
                '2. اكتب الأمر متبوعاً باسم الأغنية أو الرابط.\n' +
                '   *أمثلة:*\n' +
-               '   `!ش حسين غزال`\n' +
-               '   `!ش <رابط سبوتيفاي>`\n' +
-               '   `!ش <رابط يوتيوب>`', 
+               '   `!ش اسم الاغنية` (بحث يوتيوب مباشر)\n' +
+               '   `!ش <رابط يوتيوب>`\n' +
+               '   `!ش <رابط سبوتيفاي>`', 
         inline: false 
       },
       { 
         name: '🎛️ أزرار التحكم باللوحة', 
-        value: 'عند التشغيل، ستظهر لوحة تحكم تفاعلية تمكنك من تغيير مستوى الصوت، التخطي، التكرار، وعرض القائمة بضغطة زر.', 
-        inline: false 
-      },
-      { 
-        name: '⚙️ خيارات الإدارة', 
-        value: 'يمكن للمشرفين إعداد الاختصارات وتعديل الغرف البرمجية عبر الأمر `!help`.', 
+        value: 'عند التشغيل، ستظهر لوحة تحكم تفاعلية مميزة بصورة كبيرة تمكنك من تغيير مستوى الصوت، التخطي، التكرار، وعرض القائمة بضغطة زر.', 
         inline: false 
       }
     )
-    .setFooter({ text: 'دليل الاستخدام التفاعلي' })
+    .setFooter({ text: 'دليل الاستخدام التفاعلي • يوتيوب وسبوتيفاي حصراً' })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
@@ -228,20 +236,21 @@ export function buildAdminHelpEmbed(botConfig) {
 }
 
 /**
- * Builds the interactive Song Enqueued Embed.
+ * Builds the interactive Song Enqueued Embed with large artwork.
  */
 export function buildEnqueueEmbed(track, queueLength, currentTrack) {
   const embed = new EmbedBuilder()
-    .setColor('#FF0055')
-    .setTitle('📥 تم إضافة الأغنية لقائمة الانتظار')
-    .setDescription(`**[${track.title}](${track.url})**\n⏱️ *انتظر تخلص الأغنية الفوق يلا تشتغل هاي.*`)
-    .setThumbnail(track.thumbnail || null)
+    .setColor(0xFF0055)
+    .setAuthor({ name: '📥 تم إضافة مقطع لقائمة الانتظار', iconURL: 'https://cdn-icons-png.flaticon.com/512/833/833446.png' })
+    .setTitle(`✨ ${track.title}`)
+    .setURL(track.url || null)
+    .setImage(track.thumbnail || null)
     .addFields(
       { name: '👤 طلب بواسطة', value: `${track.requester}`, inline: true },
       { name: '⏳ ترتيب الانتظار', value: `#${queueLength}`, inline: true },
-      { name: '🎧 يعمل الآن', value: currentTrack ? `[${currentTrack.title}](${currentTrack.url})` : 'لا يوجد', inline: false }
+      { name: '🎧 يعمل الآن في الروم', value: currentTrack ? `[${currentTrack.title}](${currentTrack.url})` : 'لا يوجد', inline: false }
     )
-    .setFooter({ text: 'شبكة الموسيقى • انقر سكب لتخطي الأغنية الحالية' })
+    .setFooter({ text: 'انقر سكب بالأسفل لتخطي الأغنية الحالية فوراً' })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
@@ -254,4 +263,3 @@ export function buildEnqueueEmbed(track, queueLength, currentTrack) {
 
   return { embeds: [embed], components: [row] };
 }
-

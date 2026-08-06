@@ -54,8 +54,7 @@ async function startWorker() {
     } else if (msg.type === 'TEST_PLAY') {
       console.log(`[Worker-${botConfigId}] IPC TEST_PLAY received: playing test track.`);
       if (bot.audioManager) {
-        // Play a short public domain/creative commons test track on SoundCloud
-        const testTrackUrl = 'https://soundcloud.com/octave-one/black-water';
+        const testTrackUrl = 'https://www.youtube.com/watch?v=8n5dJwWXrbo';
         const result = await bot.audioManager.play(testTrackUrl, 'Master Test');
         console.log(`[Worker-${botConfigId}] Test play result:`, result);
       }
