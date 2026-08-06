@@ -389,32 +389,50 @@ export class AudioManager {
     try {
       let resource = null;
       let lastErr = null;
-      const clientRotationList = ['ANDROID', 'IOS', 'WEB_CREATOR', 'TVHTML5_SIMPLY_EMBEDDED', 'WEB'];
+      const clientRotationList = ['TVHTML5_SIMPLY_EMBEDDED', 'IOS', 'WEB_CREATOR', 'ANDROID', 'WEB'];
 
       for (const clientName of clientRotationList) {
         try {
-          console.log(`[AudioManager] Streaming YouTube audio via client [${clientName}] for: ${this.currentTrack.title}`);
-          const stream = ytdl(this.currentTrack.url, {
-            client: clientName,
-            agent: ytdlCookieAgent || undefined,
-            highWaterMark: 1 << 25
-          });
+          console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for: ${this.currentTrack.title}`);
+          const info = await ytdl.getInfo(this.currentTrack.url, { client: clientName });
+          const formats = info?.formats || [];
+          const audioFormats = ytdl.filterFormats(formats, 'audioonly');
+          const targetFormat = audioFormats.length > 0 ? audioFormats[0] : formats[0];
 
-          resource = createAudioResource(stream, {
-            inputType: StreamType.Arbitrary,
-            inlineVolume: false
-          });
-
-          if (resource) break;
+          if (targetFormat && targetFormat.url) {
+            console.log(`[AudioManager] Client [${clientName}] returned valid audio stream format (itag: ${targetFormat.itag})`);
+            const stream = ytdl.downloadFromInfo(info, { format: targetFormat, highWaterMark: 1 << 25 });
+            resource = createAudioResource(stream, {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: false
+            });
+            if (resource) break;
+          }
         } catch (cErr) {
           lastErr = cErr;
-          console.warn(`[AudioManager] Client [${clientName}] stream failed: ${cErr.message}`);
+          console.warn(`[AudioManager] Client [${clientName}] failed: ${cErr.message}`);
         }
       }
 
       if (!resource) {
         try {
-          console.log(`[AudioManager] Client rotation exhausted. Trying Innertube stream fallback for: ${this.currentTrack.title}`);
+          console.log(`[AudioManager] Client rotation fallback to play.stream for: ${this.currentTrack.title}`);
+          const stream = await play.stream(this.currentTrack.url, {
+            discordPlayerCompatibility: true,
+            htmldata: false
+          });
+          resource = createAudioResource(stream.stream, {
+            inputType: stream.type,
+            inlineVolume: false
+          });
+        } catch (playErr) {
+          console.warn(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
+        }
+      }
+
+      if (!resource) {
+        try {
+          console.log(`[AudioManager] Client rotation fallback to Innertube for: ${this.currentTrack.title}`);
           const yt = await getInnertube();
           const ytMatch = this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
           const videoId = ytMatch ? ytMatch[1] : null;
