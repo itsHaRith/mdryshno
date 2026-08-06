@@ -388,11 +388,9 @@ export class AudioManager {
     try {
       let resource;
       try {
-        console.log(`[AudioManager] Streaming authenticated YouTube audio for: ${this.currentTrack.title} (${this.currentTrack.url})`);
+        console.log(`[AudioManager] Streaming YouTube audio via ANDROID client for: ${this.currentTrack.title} (${this.currentTrack.url})`);
         const stream = ytdl(this.currentTrack.url, {
-          agent: ytdlCookieAgent || undefined,
-          filter: 'audioonly',
-          quality: 'highestaudio',
+          client: 'ANDROID',
           highWaterMark: 1 << 25
         });
 
@@ -401,7 +399,7 @@ export class AudioManager {
           inlineVolume: false
         });
       } catch (ytdlErr) {
-        console.warn(`[AudioManager] Authenticated ytdl stream fallback to play.stream: ${ytdlErr.message}`);
+        console.warn(`[AudioManager] ANDROID ytdl stream fallback: ${ytdlErr.message}`);
         const stream = await play.stream(this.currentTrack.url, {
           discordPlayerCompatibility: true,
           htmldata: false
