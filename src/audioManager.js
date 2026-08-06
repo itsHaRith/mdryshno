@@ -196,26 +196,19 @@ export class AudioManager {
     const resolvedTracks = [];
 
     try {
-      let type;
-      try {
-        type = await play.validate(query);
-      } catch (validateErr) {
-        console.warn(`[AudioManager] play.validate failed: ${validateErr.message}. Fallback to text search...`);
-        type = 'search';
-      }
+      const ytMatch = query.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
+      const directVideoId = ytMatch ? ytMatch[1] : null;
 
-      if (type === 'yt_video') {
+      if (directVideoId) {
         try {
           const yt = await getInnertube();
-          const match = query.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-          const videoId = match ? match[1] : null;
-
-          if (yt && videoId) {
-            const info = await yt.getBasicInfo(videoId);
+          if (yt) {
+            const info = await yt.getBasicInfo(directVideoId);
             const details = info.basic_info;
+            const realTitle = typeof details.title === 'string' ? details.title : (details.title?.text || 'YouTube Video');
             resolvedTracks.push(this.formatTrack(
-              details.title || 'YouTube Video',
-              `https://www.youtube.com/watch?v=${videoId}`,
+              realTitle,
+              `https://www.youtube.com/watch?v=${directVideoId}`,
               (details.duration || 0) * 1000,
               details.thumbnail?.[0]?.url,
               details.author || 'YouTube',
@@ -228,36 +221,48 @@ export class AudioManager {
           }
         } catch (ytUrlErr) {
           console.warn(`[AudioManager] Innertube video info resolution failed: ${ytUrlErr.message}. Fallback to play.video_basic_info...`);
-          const info = await play.video_basic_info(query);
-          const video = info.video_details;
-          resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-        }
-      } 
-      else if (type === 'yt_playlist') {
-        const playlist = await play.playlist_info(query, { incomplete: true });
-        const videos = await playlist.all_videos();
-        for (const video of videos) {
-          resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-        }
-      } 
-      else if (type === 'sp_track') {
-        const spotifyData = await play.spotify(query);
-        const ytTrack = await this.searchAndResolveSpotify(spotifyData, requesterTag);
-        if (ytTrack) resolvedTracks.push(ytTrack);
-      } 
-      else if (type === 'sp_album' || type === 'sp_playlist') {
-        const spotifyData = await play.spotify(query);
-        const fetchedTracks = await spotifyData.all_tracks();
-        
-        // Resolve tracks in parallel chunks to optimize search speed
-        const chunk = fetchedTracks.slice(0, 15); // Limit batch size to protect API
-        const promises = chunk.map(track => this.searchAndResolveSpotify(track, requesterTag));
-        const results = await Promise.all(promises);
-        for (const track of results) {
-          if (track) resolvedTracks.push(track);
+          try {
+            const info = await play.video_basic_info(query);
+            const video = info.video_details;
+            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+          } catch (e2) {
+            resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, `https://www.youtube.com/watch?v=${directVideoId}`, 0, null, 'YouTube', requesterTag));
+          }
         }
       } 
       else {
+        let type;
+        try {
+          type = await play.validate(query);
+        } catch (validateErr) {
+          type = 'search';
+        } 
+
+        if (type === 'yt_playlist') {
+          const playlist = await play.playlist_info(query, { incomplete: true });
+          const videos = await playlist.all_videos();
+          for (const video of videos) {
+            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+          }
+        } 
+        else if (type === 'sp_track') {
+          const spotifyData = await play.spotify(query);
+          const ytTrack = await this.searchAndResolveSpotify(spotifyData, requesterTag);
+          if (ytTrack) resolvedTracks.push(ytTrack);
+        } 
+        else if (type === 'sp_album' || type === 'sp_playlist') {
+          const spotifyData = await play.spotify(query);
+          const fetchedTracks = await spotifyData.all_tracks();
+          
+          // Resolve tracks in parallel chunks to optimize search speed
+          const chunk = fetchedTracks.slice(0, 15); // Limit batch size to protect API
+          const promises = chunk.map(track => this.searchAndResolveSpotify(track, requesterTag));
+          const results = await Promise.all(promises);
+          for (const track of results) {
+            if (track) resolvedTracks.push(track);
+          }
+        } 
+        else {
         // Text query: search YouTube ONLY (Innertube first, then play.search fallback)
         try {
           const yt = await getInnertube();
@@ -291,6 +296,7 @@ export class AudioManager {
           throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
         }
       }
+    }
     } catch (err) {
       console.error(`[AudioManager] Error resolving play query "${query}":`, err.message);
       return { success: false, error: err.message };
