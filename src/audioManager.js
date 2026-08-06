@@ -31,7 +31,13 @@ try {
   console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
 }
 
-const isPlaceholder = (val) => typeof val === 'string' && (val.includes('YOUR_COOKIE') || val.includes('YOUR_PO_TOKEN') || val.includes('YOUR_VISITOR') || val.trim().length === 0);
+const isPlaceholder = (val) => typeof val === 'string' && (
+  val.includes('YOUR_COOKIE') || 
+  val.includes('YOUR_PO_TOKEN') || 
+  val.includes('YOUR_VISITOR') || 
+  val.includes('ضع_هنا') || 
+  val.trim().length === 0
+);
 
 async function getValidYouTubeAuth() {
   const dbAuth = await fetchYoutubeAuth();
