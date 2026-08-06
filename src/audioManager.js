@@ -4,7 +4,8 @@ import {
   createAudioResource, 
   AudioPlayerStatus, 
   VoiceConnectionStatus,
-  entersState
+  entersState,
+  StreamType
 } from '@discordjs/voice';
 import play from 'play-dl';
 import { buildPlayerDashboard } from './uiBuilder.js';
@@ -21,6 +22,19 @@ if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
     console.log('[AudioManager] Spotify credentials registered successfully.');
   }).catch((err) => {
     console.warn('[AudioManager] Spotify credential initialization failed. Falling back to public scraper:', err.message);
+  });
+}
+
+// Initialize YouTube cookies if present in environment variables (required to bypass bot validation)
+if (process.env.YOUTUBE_COOKIE) {
+  play.setToken({
+    youtube: {
+      cookie: process.env.YOUTUBE_COOKIE
+    }
+  }).then(() => {
+    console.log('[AudioManager] YouTube cookies registered successfully.');
+  }).catch((err) => {
+    console.warn('[AudioManager] Failed to register YouTube cookies:', err.message);
   });
 }
 
@@ -229,13 +243,30 @@ export class AudioManager {
     this.currentTrack = this.queue.shift();
 
     try {
-      // Stream audio source
-      const stream = await play.stream(this.currentTrack.url);
-      this.audioResource = createAudioResource(stream.stream, {
-        inputType: stream.type,
-        inlineVolume: true
-      });
+      let resource;
+      try {
+        console.log(`[AudioManager] Attempting play-dl stream for: ${this.currentTrack.title}`);
+        const stream = await play.stream(this.currentTrack.url);
+        resource = createAudioResource(stream.stream, {
+          inputType: stream.type,
+          inlineVolume: true
+        });
+      } catch (streamErr) {
+        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting direct format fallback...`);
+        // Fallback: Fetch video info and find first playable format URL (typically itag 18)
+        const videoInfo = await play.video_info(this.currentTrack.url);
+        const playableFormat = videoInfo.format.find(fmt => fmt.url);
+        if (!playableFormat) {
+          throw new Error('No playable format URL found.');
+        }
+        console.log(`[AudioManager] Streaming direct format URL itag: ${playableFormat.itag}`);
+        resource = createAudioResource(playableFormat.url, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: true
+        });
+      }
 
+      this.audioResource = resource;
       this.audioResource.volume.setVolume(this.volume / 100);
       this.audioPlayer.play(this.audioResource);
 

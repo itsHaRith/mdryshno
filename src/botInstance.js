@@ -60,9 +60,9 @@ export class BotInstance {
         const command = args.shift().toLowerCase();
 
         // 1. Play Command (Plays songs/Spotify)
-        if (command === 'play' || command === 'p') {
+        if (command === 'play' || command === 'p' || command === 'ش') {
           if (args.length === 0) {
-            return message.reply(`❌ Please provide a song title or link. Example: \`${prefix}play lo-fi\``);
+            return message.reply(`❌ Please provide a song title or link. Example: \`${prefix}ش lo-fi\``);
           }
 
           const query = args.join(' ');
@@ -82,6 +82,29 @@ export class BotInstance {
             await feedbackMsg.edit(`❌ Error enqueuing track: ${result.error}`);
           }
         } 
+
+        // 1.5. Skip Command
+        else if (command === 'skip' || command === 's' || command === 'س') {
+          if (!this.audioManager || !this.audioManager.currentTrack) {
+            return message.reply('❌ No music is currently playing.');
+          }
+          this.audioManager.skip();
+          return message.reply('⏭️ Skipped current song.');
+        }
+
+        // 1.6. Pause / Resume Command
+        else if (command === 'pause' || command === 't' || command === 'ت') {
+          if (!this.audioManager || !this.audioManager.currentTrack) {
+            return message.reply('❌ No music is currently playing.');
+          }
+          if (this.audioManager.isPaused) {
+            this.audioManager.resume();
+            return message.reply('▶️ Playback resumed!');
+          } else {
+            this.audioManager.pause();
+            return message.reply('⏸️ Playback paused!');
+          }
+        }
         
         // 2. Dynamic Help & Master Control Commands
         else if (command === 'help' || command === 'admin-commands') {
