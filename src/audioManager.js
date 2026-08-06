@@ -1,166 +1,76 @@
-import { 
-  joinVoiceChannel, 
-  createAudioPlayer, 
-  createAudioResource, 
-  AudioPlayerStatus, 
+/**
+ * AudioManager  (v2 — new architecture)
+ *
+ * Public API is IDENTICAL to v1 so botInstance.js requires zero changes.
+ *
+ * Internals delegate to the new modular pipeline:
+ *   trackResolver  → converts any user input to Track[]
+ *   extractionEngine → three-tier authenticated stream extraction
+ *   @discordjs/voice → AudioPlayer + VoiceConnection (unchanged)
+ *
+ * What changed vs v1:
+ *   ✓ Cookie handling moved to CookieManager (Supabase → local fallback)
+ *   ✓ Search moved to SearchEngine (Innertube primary, play-dl protected fallback)
+ *   ✓ Extraction moved to ExtractionEngine (ytdl agent-correct → Innertube → play-dl)
+ *   ✓ ytdl agent passed via options.agent — eliminates "old cookie format" warning
+ *   ✓ ytdl.setPoTokenAndVisitorData() called on every extraction with fresh values
+ *   ✓ On bot-check/403 → cookie cache invalidated, Innertube client reset, then retry
+ *   ✓ No global mutable auth state scattered across the file
+ *   ✓ No raw console.* calls — all through logger
+ */
+
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  AudioPlayerStatus,
   VoiceConnectionStatus,
   entersState,
-  StreamType,
   getVoiceConnection
 } from '@discordjs/voice';
-import { Readable } from 'stream';
-import play from 'play-dl';
-import ytdl from 'ytdl-core-enhanced';
-import ffmpeg from 'ffmpeg-static';
-import { Innertube } from 'youtubei.js';
+
+import { trackResolver }    from './audio/resolver/TrackResolver.js';
+import { extractionEngine } from './audio/extraction/ExtractionEngine.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
-import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
-import { fetchYoutubeAuth } from './config/supabaseClient.js';
-import { logger } from './utils/logger.js';
-
-// Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
-if (ffmpeg) {
-  process.env.FFMPEG_PATH = ffmpeg;
-}
-
-// Build ytdl agent from cookie array — must be passed as options.agent (NOT requestOptions.headers.cookie)
-// Passing via headers triggers "old cookie format" warning and falls back to anonymous defaultAgent
-let ytdlCookieAgent = null;
-try {
-  ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
-  logger.info('[AudioManager] Authenticated YouTube Cookie Agent initialized.');
-} catch (agentErr) {
-  logger.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
-}
-
-const isPlaceholder = (val) => typeof val === 'string' && (
-  val.includes('YOUR_COOKIE') || 
-  val.includes('YOUR_PO_TOKEN') || 
-  val.includes('YOUR_VISITOR') || 
-  val.includes('ضع_هنا') || 
-  val.trim().length === 0
-);
-
-async function getValidYouTubeAuth() {
-  const dbAuth = await fetchYoutubeAuth();
-  const fallbackCookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
-  
-  const cookieHeader = (dbAuth?.cookie_header && !isPlaceholder(dbAuth.cookie_header))
-    ? dbAuth.cookie_header
-    : fallbackCookieString;
-
-  const poToken = (dbAuth?.po_token && !isPlaceholder(dbAuth.po_token))
-    ? dbAuth.po_token
-    : undefined;
-
-  const visitorData = (dbAuth?.visitor_data && !isPlaceholder(dbAuth.visitor_data))
-    ? dbAuth.visitor_data
-    : undefined;
-
-  return { cookieHeader, poToken, visitorData };
-}
-
-let innertubeInstance = null;
-let innertubeInitialized = false;
-async function getInnertube() {
-  if (!innertubeInitialized) {
-    innertubeInitialized = true;
-    try {
-      const auth = await getValidYouTubeAuth();
-      innertubeInstance = await Innertube.create({
-        cookie: auth.cookieHeader || undefined,
-        po_token: auth.poToken || undefined,
-        visitor_data: auth.visitorData || undefined,
-        generate_session_locally: !auth.poToken // only auto-generate if no stored token
-      });
-      logger.info('[AudioManager] Innertube instance initialized.');
-    } catch (e) {
-      logger.warn('[AudioManager] Failed to initialize Innertube:', e.message);
-    }
-  }
-  return innertubeInstance;
-}
-
-// Build a fresh authenticated ytdl agent from current auth (Supabase preferred over local)
-// Returns the agent object with .jar — must be passed as options.agent to getInfo/downloadFromInfo
-async function buildYtdlAgent() {
-  try {
-    const auth = await getValidYouTubeAuth();
-    if (auth.poToken && auth.visitorData) {
-      // Inject poToken + visitorData globally so InnerTube player API includes serviceIntegrityDimensions
-      ytdl.setPoTokenAndVisitorData(auth.poToken, auth.visitorData);
-    }
-    // Build cookie array from cookie header string for the agent jar
-    const cookieArray = auth.cookieHeader
-      ? auth.cookieHeader.split(';').map(pair => {
-          const [name, ...rest] = pair.trim().split('=');
-          return { name: name?.trim(), value: rest.join('=').trim(), domain: '.youtube.com', path: '/' };
-        }).filter(c => c.name && c.value)
-      : USER_YOUTUBE_COOKIES;
-    return ytdl.createAgent(cookieArray);
-  } catch (e) {
-    logger.warn('[AudioManager] Failed to build ytdl agent, using static cookies:', e.message);
-    return ytdlCookieAgent;
-  }
-}
-
-// Seed play-dl with cookie string
-getValidYouTubeAuth().then((auth) => {
-  if (!auth.cookieHeader) return;
-  play.setToken({
-    youtube: { cookie: auth.cookieHeader }
-  }).then(() => {
-    logger.info('[AudioManager] play-dl cookie registered.');
-  }).catch((err) => {
-    logger.debug('[AudioManager] play-dl setToken skipped:', err.message);
-  });
-});
-
-// Seed ytdl poToken + visitorData from Supabase at startup
-getValidYouTubeAuth().then((auth) => {
-  if (auth.poToken && auth.visitorData) {
-    ytdl.setPoTokenAndVisitorData(auth.poToken, auth.visitorData);
-    logger.info('[AudioManager] ytdl poToken + visitorData seeded from Supabase.');
-  }
-});
+import { logger }           from './utils/logger.js';
 
 export class AudioManager {
   constructor(client, botConfig) {
-    this.client = client;
-    this.botConfig = botConfig;
-    this.guildId = botConfig.guild_id;
+    this.client        = client;
+    this.botConfig     = botConfig;
+    this.guildId       = botConfig.guild_id;
     this.voiceChannelId = botConfig.voice_channel_id;
-    this.textChannelId = botConfig.text_channel_id;
+    this.textChannelId  = botConfig.text_channel_id;
 
-    this.queue = [];
-    this.currentTrack = null;
-    this.volume = 100;
-    this.loopMode = 'none'; // 'none' | 'track' | 'queue'
-    this.isPaused = false;
+    this.queue         = [];
+    this.currentTrack  = null;
+    this.volume        = 100;
+    this.loopMode      = 'none'; // 'none' | 'track' | 'queue'
+    this.isPaused      = false;
 
-    this.voiceConnection = null;
-    this.audioPlayer = null;
-    this.audioResource = null;
+    this.voiceConnection  = null;
+    this.audioPlayer      = null;
+    this.audioResource    = null;
     this.dashboardMessage = null;
     this.dashboardInterval = null;
 
-    this.initializeAudioPlayer();
+    this._initPlayer();
   }
 
-  /**
-   * Initializes the discord.js voice audio player and its event listeners.
-   */
-  initializeAudioPlayer() {
+  // ─────────────────────────────────────────────────────────────────────
+  // Player initialisation
+  // ─────────────────────────────────────────────────────────────────────
+
+  _initPlayer() {
     this.audioPlayer = createAudioPlayer();
 
-    this.audioPlayer.on('stateChange', (oldState, newState) => {
-      logger.debug(`[AudioPlayer] Bot ${this.botConfig.bot_name} state changed: ${oldState.status} ===> ${newState.status}`);
+    this.audioPlayer.on('stateChange', (old, next) => {
+      logger.debug(`[AudioPlayer:${this.botConfig.bot_name}] ${old.status} → ${next.status}`);
     });
 
     this.audioPlayer.on(AudioPlayerStatus.Playing, () => {
       this.isPaused = false;
-      logger.info(`[AudioPlayer] Track started playing on Bot ${this.botConfig.bot_name}: "${this.currentTrack?.title || 'Unknown'}"`);
-      this.startDashboardUpdates();
+      logger.info(`[AudioPlayer:${this.botConfig.bot_name}] ▶ "${this.currentTrack?.title}"`);
+      this._startDashboardUpdates();
     });
 
     this.audioPlayer.on(AudioPlayerStatus.Paused, () => {
@@ -169,73 +79,70 @@ export class AudioManager {
     });
 
     this.audioPlayer.on(AudioPlayerStatus.Idle, () => {
-      this.stopDashboardUpdates();
-      this.handleTrackEnd();
+      this._stopDashboardUpdates();
+      this._onTrackEnd();
     });
 
-    this.audioPlayer.on('error', (error) => {
-      logger.error(`[AudioManager] AudioPlayer error on bot ${this.botConfig.bot_name}: ${error.message}`);
-      this.stopDashboardUpdates();
-      this.handleTrackEnd();
+    this.audioPlayer.on('error', err => {
+      logger.error(`[AudioPlayer:${this.botConfig.bot_name}] Error: ${err.message}`);
+      this._stopDashboardUpdates();
+      this._onTrackEnd();
     });
   }
 
-  /**
-   * Connects the bot to its designated voice channel.
-   */
+  // ─────────────────────────────────────────────────────────────────────
+  // Voice connection
+  // ─────────────────────────────────────────────────────────────────────
+
   async connect() {
     try {
       const channel = await this.client.channels.fetch(this.voiceChannelId);
-      if (!channel || !channel.isVoiceBased()) {
-        throw new Error(`Channel ${this.voiceChannelId} is not a valid voice channel.`);
+      if (!channel?.isVoiceBased()) {
+        throw new Error(`Channel ${this.voiceChannelId} is not voice-based.`);
       }
 
       const guild = channel.guild;
-      const me = guild.members.me || await guild.members.fetch(this.client.user.id).catch(() => null);
+      const me    = guild.members.me ?? await guild.members.fetch(this.client.user.id).catch(() => null);
 
-      // Task 6: Voice Connection Reuse Safeguard
+      // Reuse if already connected to the same channel and healthy
       if (
         this.voiceConnection &&
         this.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed &&
         this.voiceConnection.state.status !== VoiceConnectionStatus.Disconnected &&
         me?.voice?.channelId === this.voiceChannelId
       ) {
-        logger.info(`[AudioManager] Reusing active VoiceConnection for Bot ${this.botConfig.bot_name} in channel: ${channel.name}`);
+        logger.info(`[VoiceManager:${this.botConfig.bot_name}] Reusing active connection.`);
         return;
       }
 
-      // Disconnect server-side ghost session if channel has changed
-      if (me && me.voice.channelId && me.voice.channelId !== this.voiceChannelId) {
-        logger.info(`[AudioManager] Bot channel target changed. Disconnecting from old voice channel ${me.voice.channelId}...`);
-        try {
-          await me.voice.disconnect();
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (e) {
-          logger.warn('[AudioManager] Failed to disconnect old server voice session:', e.message);
-        }
+      // Disconnect ghost session if we're in a different channel
+      if (me?.voice?.channelId && me.voice.channelId !== this.voiceChannelId) {
+        await me.voice.disconnect().catch(() => {});
+        await new Promise(r => setTimeout(r, 800));
       }
 
       this.voiceConnection = joinVoiceChannel({
-        channelId: this.voiceChannelId,
-        guildId: this.guildId,
+        channelId:      this.voiceChannelId,
+        guildId:        this.guildId,
         adapterCreator: channel.guild.voiceAdapterCreator,
-        selfDeaf: true,
-        selfMute: false
+        selfDeaf:  true,
+        selfMute:  false
       });
 
-      this.voiceConnection.on('stateChange', (oldState, newState) => {
-        logger.debug(`[VoiceConnection] Bot ${this.botConfig.bot_name} state changed: ${oldState.status} ===> ${newState.status}`);
+      this.voiceConnection.on('stateChange', (old, next) => {
+        logger.debug(`[VoiceConn:${this.botConfig.bot_name}] ${old.status} → ${next.status}`);
       });
 
-      this.voiceConnection.on('error', (error) => {
-        logger.error(`[AudioManager] VoiceConnection error on bot ${this.botConfig.bot_name}: ${error.message}`);
+      this.voiceConnection.on('error', err => {
+        logger.error(`[VoiceConn:${this.botConfig.bot_name}] ${err.message}`);
       });
 
+      // Auto-reconnect on disconnect (network blips)
       this.voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
         try {
           await Promise.race([
-            entersState(this.voiceConnection, VoiceConnectionStatus.Signalling, 5000),
-            entersState(this.voiceConnection, VoiceConnectionStatus.Connecting, 5000)
+            entersState(this.voiceConnection, VoiceConnectionStatus.Signalling,  5_000),
+            entersState(this.voiceConnection, VoiceConnectionStatus.Connecting,  5_000)
           ]);
         } catch {
           this.destroy();
@@ -243,179 +150,55 @@ export class AudioManager {
       });
 
       this.voiceConnection.subscribe(this.audioPlayer);
-      logger.info(`[AudioManager] Bot ${this.botConfig.bot_name} connected to Voice Channel: ${channel.name}`);
+      logger.info(`[VoiceManager:${this.botConfig.bot_name}] Connected to #${channel.name}`);
     } catch (err) {
-      logger.error(`[AudioManager] Bot ${this.botConfig.bot_name} failed to join Voice Channel: ${err.message}`);
+      logger.error(`[VoiceManager:${this.botConfig.bot_name}] Connect failed: ${err.message}`);
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Public play() entry point  (called by botInstance.js)
+  // ─────────────────────────────────────────────────────────────────────
+
   /**
-   * Adds songs (SoundCloud queries, SoundCloud URLs, Spotify URLs) to the queue.
-   */
-  /**
-   * Adds songs (YouTube queries, YouTube URLs) to the queue.
+   * Resolve `query`, enqueue resolved tracks, start playback if idle.
+   * @param {string} query        User input (URL or search text)
+   * @param {string} requesterTag Discord user tag
+   * @returns {{ success: boolean, count?: number, tracks?: Track[], error?: string }}
    */
   async play(query, requesterTag) {
     if (!this.voiceConnection) {
       await this.connect();
     }
 
-    const resolvedTracks = [];
-
+    let tracks;
     try {
-      const ytMatch = query.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-      const directVideoId = ytMatch ? ytMatch[1] : null;
-
-      if (directVideoId) {
-        const videoUrl = `https://www.youtube.com/watch?v=${directVideoId}`;
-        try {
-          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`);
-          if (oembedRes.ok) {
-            const data = await oembedRes.json();
-            console.log(`[AudioManager] oEmbed resolved title for ${directVideoId}: "${data.title}"`);
-            resolvedTracks.push(this.formatTrack(
-              data.title || 'YouTube Video',
-              videoUrl,
-              0,
-              data.thumbnail_url || null,
-              data.author_name || 'YouTube',
-              requesterTag
-            ));
-          } else {
-            throw new Error(`oEmbed status ${oembedRes.status}`);
-          }
-        } catch (ytUrlErr) {
-          console.warn(`[AudioManager] oEmbed info resolution failed for ${directVideoId}: ${ytUrlErr.message}. Fallback to direct URL format.`);
-          resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, videoUrl, 0, null, 'YouTube', requesterTag));
-        }
-      } 
-      else {
-        let type;
-        try {
-          type = await play.validate(query);
-        } catch (validateErr) {
-          type = 'search';
-        } 
-
-        if (type === 'yt_playlist') {
-          const playlist = await play.playlist_info(query, { incomplete: true });
-          const videos = await playlist.all_videos();
-          for (const video of videos) {
-            const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
-            if (videoId) {
-              const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-              resolvedTracks.push(this.formatTrack(video.title, video.url, (video.durationInSec || 0) * 1000, video.thumbnails?.[0]?.url, video.channel?.name, requesterTag));
-            }
-          }
-        } 
-        else {
-          // Text search query: execute Innertube search first for reliable renderer parsing, with protected play.search fallback
-          try {
-            logger.debug(`[AudioManager] Searching YouTube for text query: "${query}"`);
-            let searchResolved = false;
-
-            // Tier 1: Innertube search with safe video filtering
-            try {
-              const yt = await getInnertube();
-              if (yt) {
-                const searchRes = await yt.search(query);
-                const rawVideos = searchRes?.videos || [];
-                const validVideos = rawVideos.filter(v => v && (v.video_id || v.id || v.endpoint?.payload?.videoId));
-
-                if (validVideos.length > 0) {
-                  const ytVideo = validVideos[0];
-                  const videoId = ytVideo.video_id || ytVideo.id || (typeof ytVideo.endpoint?.payload?.videoId === 'string' ? ytVideo.endpoint.payload.videoId : null);
-                  
-                  if (videoId) {
-                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                    const realTitle = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
-                    const authorName = ytVideo.author?.name || ytVideo.author?.text || 'YouTube';
-                    
-                    logger.info(`[AudioManager] Search resolved valid YouTube track: "${realTitle}" (${videoUrl})`);
-
-                    resolvedTracks.push(this.formatTrack(
-                      realTitle,
-                      videoUrl,
-                      (ytVideo.duration?.seconds || 0) * 1000,
-                      ytVideo.thumbnails?.[0]?.url || null,
-                      authorName,
-                      requesterTag
-                    ));
-                    searchResolved = true;
-                  }
-                }
-              }
-            } catch (innertubeErr) {
-              logger.warn(`[AudioManager] Innertube search error for "${query}": ${innertubeErr.message}`);
-            }
-
-            // Tier 2: Protected play.search fallback (catches browseId errors from play-dl)
-            if (!searchResolved) {
-              try {
-                logger.debug(`[AudioManager] Innertube yielded no results for "${query}". Trying play.search fallback...`);
-                const ytSearch = await play.search(query, { limit: 1 });
-                
-                if (ytSearch && ytSearch.length > 0 && (ytSearch[0].id || ytSearch[0].url)) {
-                  const video = ytSearch[0];
-                  const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
-                  
-                  if (videoId) {
-                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                    logger.info(`[AudioManager] play.search fallback resolved track: "${video.title}" (${videoUrl})`);
-                    
-                    resolvedTracks.push(this.formatTrack(
-                      video.title || query,
-                      videoUrl,
-                      (video.durationInSec || 0) * 1000,
-                      video.thumbnails?.[0]?.url || null,
-                      video.channel?.name || 'YouTube',
-                      requesterTag
-                    ));
-                    searchResolved = true;
-                  }
-                }
-              } catch (playSearchErr) {
-                logger.warn(`[AudioManager] play.search fallback error for "${query}": ${playSearchErr.message}`);
-              }
-            }
-
-            if (resolvedTracks.length === 0) {
-              throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
-            }
-          } catch (ytSearchErr) {
-            logger.warn(`[AudioManager] YouTube search resolution failed for "${query}": ${ytSearchErr.message}`);
-            return { success: false, error: ytSearchErr.message };
-          }
-        }
-      }
+      tracks = await trackResolver.resolve(query, requesterTag);
     } catch (err) {
-      console.error(`[AudioManager] Error resolving play query "${query}":`, err.message);
+      logger.warn(`[AudioManager:${this.botConfig.bot_name}] Resolve failed: ${err.message}`);
       return { success: false, error: err.message };
     }
 
-    if (resolvedTracks.length === 0) {
-      return { success: false, error: 'Could not resolve query to any playable YouTube media.' };
+    if (!tracks || tracks.length === 0) {
+      return { success: false, error: `لم يتم العثور على نتائج لـ: "${query}"` };
     }
 
-    this.queue.push(...resolvedTracks);
+    this.queue.push(...tracks);
 
     if (!this.currentTrack) {
-      await this.startPlayback();
+      await this._startPlayback();
     } else {
       this.updateDashboard();
     }
 
-    return { success: true, count: resolvedTracks.length, tracks: resolvedTracks };
+    return { success: true, count: tracks.length, tracks };
   }
 
-  formatTrack(title, url, durationMS, thumbnail, artist, requester) {
-    return { title, url, durationMS, thumbnail, artist, requester };
-  }
+  // ─────────────────────────────────────────────────────────────────────
+  // Internal playback
+  // ─────────────────────────────────────────────────────────────────────
 
-  /**
-   * Begins streaming the first item in the queue.
-   */
-  async startPlayback() {
+  async _startPlayback() {
     if (this.queue.length === 0) {
       this.currentTrack = null;
       this.deleteDashboard();
@@ -424,139 +207,50 @@ export class AudioManager {
 
     this.currentTrack = this.queue.shift();
 
+    if (!this.currentTrack?.id) {
+      logger.error(`[AudioManager] Track has no ID — skipping.`);
+      return this._onTrackEnd();
+    }
+
+    // Stop current player resource cleanly (don't trigger Idle → _onTrackEnd)
     if (this.audioPlayer) {
       this.audioPlayer.stop(true);
     }
 
-    // Extract and validate YouTube Video ID before any stream extraction attempt
-    const ytMatch = this.currentTrack.url ? this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/) : null;
-    const selectedVideoId = ytMatch ? ytMatch[1] : null;
-
-    logger.debug('[AudioManager] Stream Extraction Diagnostic:', {
-      query: this.currentTrack.requester || 'User Request',
-      selectedTitle: this.currentTrack.title,
-      selectedVideoId: selectedVideoId,
-      selectedUrl: this.currentTrack.url,
-      queueLength: this.queue.length
-    });
-
-    if (!selectedVideoId) {
-      logger.error(`[AudioManager] Invalid YouTube URL in queue: "${this.currentTrack.url}". Skipping track.`);
-      return this.handleTrackEnd();
-    }
-
-    // Re-normalize URL to standard YouTube watch link
-    const cleanWatchUrl = `https://www.youtube.com/watch?v=${selectedVideoId}`;
-    this.currentTrack.url = cleanWatchUrl;
-
-    const startTime = Date.now();
+    logger.debug(`[AudioManager:${this.botConfig.bot_name}] Extracting: "${this.currentTrack.title}" [${this.currentTrack.id}]`);
+    const start = Date.now();
 
     try {
-      let resource = null;
-      let lastErr = null;
-
-      // Build authenticated agent — MUST be passed as options.agent (not headers.cookie)
-      // Passing via headers triggers "old cookie format" warning and bypasses authentication
-      const agent = await buildYtdlAgent();
-
-      // Tier 1: ytdl-core-enhanced with authenticated agent
-      // The agent carries the cookie jar; ytdl reads it via options.agent.jar
-      try {
-        logger.debug(`[AudioManager] ytdl extraction for videoId [${selectedVideoId}]: "${this.currentTrack.title}"`);
-        const info = await ytdl.getInfo(cleanWatchUrl, {
-          agent,                    // ← This is the correct way — NOT requestOptions.headers.cookie
-          requestOptions: { headers: {} }
-        });
-        const formats = info?.formats || [];
-        // Prefer opus/webm audio-only for lowest latency; fall back to any audio
-        const targetFormat =
-          formats.find(f => f.hasAudio && !f.hasVideo && f.codecs?.includes('opus') && f.url) ||
-          formats.find(f => f.hasAudio && !f.hasVideo && f.url) ||
-          formats.find(f => f.hasAudio && f.url);
-
-        if (targetFormat?.url) {
-          logger.debug(`[AudioManager] Format selected: itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", bitrate=${targetFormat.audioBitrate || 'N/A'}kbps`);
-          const stream = ytdl.downloadFromInfo(info, {
-            format: targetFormat,
-            agent,                  // ← agent also required here so cookie jar populates the download request
-            highWaterMark: 1 << 25
-          });
-          resource = createAudioResource(stream, { inputType: StreamType.Arbitrary, inlineVolume: false });
-          const elapsed = Date.now() - startTime;
-          logger.info(`[AudioManager] ytdl stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
-        } else {
-          lastErr = new Error('No audio format with URL found in ytdl response');
-          logger.debug(`[AudioManager] ytdl: no suitable audio format for videoId [${selectedVideoId}]`);
-        }
-      } catch (ytdlErr) {
-        lastErr = ytdlErr;
-        logger.debug(`[AudioManager] ytdl failed for [${selectedVideoId}]: ${ytdlErr.message}`);
-      }
-
-      // Tier 2: youtubei.js authenticated download (already has cookies + poToken from Innertube.create)
-      if (!resource) {
-        try {
-          logger.debug(`[AudioManager] Innertube fallback for videoId [${selectedVideoId}]`);
-          const yt = await getInnertube();
-          if (yt) {
-            const webStream = await yt.download(selectedVideoId, { type: 'audio', quality: 'best' });
-            const nodeStream = Readable.fromWeb(webStream);
-            resource = createAudioResource(nodeStream, { inputType: StreamType.Arbitrary, inlineVolume: false });
-            const elapsed = Date.now() - startTime;
-            logger.info(`[AudioManager] Innertube stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
-          }
-        } catch (inErr) {
-          lastErr = inErr;
-          logger.debug(`[AudioManager] Innertube fallback failed: ${inErr.message}`);
-        }
-      }
-
-      // Tier 3: play-dl (uses internal cookie set via play.setToken)
-      if (!resource) {
-        try {
-          logger.debug(`[AudioManager] play.stream fallback for videoId [${selectedVideoId}]`);
-          const stream = await play.stream(cleanWatchUrl, { discordPlayerCompatibility: true });
-          resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: false });
-          const elapsed = Date.now() - startTime;
-          logger.info(`[AudioManager] play-dl stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
-        } catch (playErr) {
-          lastErr = playErr;
-          logger.debug(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
-        }
-      }
-
-      if (!resource) {
-        throw lastErr || new Error(`All stream extraction methods exhausted for videoId [${selectedVideoId}]`);
-      }
+      const resource = await extractionEngine.extract(
+        this.currentTrack.id,
+        this.currentTrack.title
+      );
 
       this.audioResource = resource;
-      if (this.audioResource.volume) {
-        this.audioResource.volume.setVolume(this.volume / 100);
-      }
-      this.audioPlayer.play(this.audioResource);
+      this.audioPlayer.play(resource);
       await this.updateDashboard(true);
+
+      logger.info(`[AudioManager:${this.botConfig.bot_name}] Playback started in ${Date.now() - start}ms: "${this.currentTrack.title}"`);
     } catch (err) {
-      logger.error(`[AudioManager] Stream extraction failed for "${this.currentTrack?.title}": ${err.message}`);
-      this.handleTrackEnd();
+      logger.error(`[AudioManager:${this.botConfig.bot_name}] Extraction failed: ${err.message}`);
+      // Skip to next track automatically
+      this._onTrackEnd();
     }
   }
 
-  /**
-   * Handles track ending: supports skip, loopModes (track / queue), or starts next song.
-   */
-  handleTrackEnd() {
+  _onTrackEnd() {
     if (this.loopMode === 'track' && this.currentTrack) {
-      // Loop the active track: put it back at the front of queue
       this.queue.unshift(this.currentTrack);
     } else if (this.loopMode === 'queue' && this.currentTrack) {
-      // Loop queue: put it back at the end of queue
       this.queue.push(this.currentTrack);
     }
-
-    this.startPlayback();
+    this._startPlayback();
   }
 
-  // Controls
+  // ─────────────────────────────────────────────────────────────────────
+  // Controls  (unchanged signatures — botInstance.js calls these)
+  // ─────────────────────────────────────────────────────────────────────
+
   pause() {
     if (this.audioPlayer && !this.isPaused) {
       this.audioPlayer.pause();
@@ -575,18 +269,16 @@ export class AudioManager {
 
   skip() {
     if (this.audioPlayer) {
-      this.audioPlayer.stop(); // Stops current resource, triggers Idle and starts next track
+      this.audioPlayer.stop(); // Triggers Idle → _onTrackEnd → next track
       return true;
     }
     return false;
   }
 
   stop() {
-    this.queue = [];
+    this.queue        = [];
     this.currentTrack = null;
-    if (this.audioPlayer) {
-      this.audioPlayer.stop(true);
-    }
+    if (this.audioPlayer) this.audioPlayer.stop(true);
     this.deleteDashboard();
     return true;
   }
@@ -603,81 +295,77 @@ export class AudioManager {
 
   toggleLoop() {
     const modes = ['none', 'track', 'queue'];
-    const nextIndex = (modes.indexOf(this.loopMode) + 1) % modes.length;
-    this.loopMode = modes[nextIndex];
+    this.loopMode = modes[(modes.indexOf(this.loopMode) + 1) % modes.length];
     this.updateDashboard();
     return this.loopMode;
   }
 
   setVolume(vol) {
-    const nextVol = Math.max(0, Math.min(150, vol));
-    this.volume = nextVol;
-    if (this.audioResource && this.audioResource.volume) {
-      this.audioResource.volume.setVolume(nextVol / 100);
+    const v = Math.max(0, Math.min(150, vol));
+    this.volume = v;
+    if (this.audioResource?.volume) {
+      this.audioResource.volume.setVolume(v / 100);
     }
     this.updateDashboard();
-    return nextVol;
+    return v;
   }
 
-  /**
-   * Refreshes or creates the interactive Embed dashboard.
-   */
+  // ─────────────────────────────────────────────────────────────────────
+  // Dashboard
+  // ─────────────────────────────────────────────────────────────────────
+
   async updateDashboard(forceNew = false) {
     if (!this.currentTrack) return;
-
-    const channel = await this.client.channels.fetch(this.textChannelId);
-    if (!channel) return;
-
-    const payload = buildPlayerDashboard(this.currentTrack, {
-      isPlaying: !this.isPaused,
-      volume: this.volume,
-      loopMode: this.loopMode,
-      currentTime: this.audioResource ? this.audioResource.playbackDuration : 0,
-      queueLength: this.queue.length
-    });
-
     try {
+      const channel = await this.client.channels.fetch(this.textChannelId);
+      if (!channel) return;
+      const payload = buildPlayerDashboard(this.currentTrack, {
+        isPlaying:   !this.isPaused,
+        volume:      this.volume,
+        loopMode:    this.loopMode,
+        currentTime: this.audioResource?.playbackDuration ?? 0,
+        queueLength: this.queue.length
+      });
       if (this.dashboardMessage && !forceNew) {
         await this.dashboardMessage.edit(payload);
       } else {
-        // Delete old UI before posting new
-        this.deleteDashboard();
+        await this.deleteDashboard();
         this.dashboardMessage = await channel.send(payload);
       }
-    } catch (err) {
-      // In case message was deleted or channels missing
+    } catch {
       this.dashboardMessage = null;
     }
   }
 
   async deleteDashboard() {
-    this.stopDashboardUpdates();
+    this._stopDashboardUpdates();
     if (this.dashboardMessage) {
-      try {
-        await this.dashboardMessage.delete();
-      } catch {
-        // Message already deleted
-      }
+      await this.dashboardMessage.delete().catch(() => {});
       this.dashboardMessage = null;
     }
   }
 
-  startDashboardUpdates() {
-    this.stopDashboardUpdates();
-    // Update progress bar every 10 seconds to reduce rate limits
-    this.dashboardInterval = setInterval(() => {
-      this.updateDashboard();
-    }, 10000);
+  _startDashboardUpdates() {
+    this._stopDashboardUpdates();
+    this.dashboardInterval = setInterval(() => this.updateDashboard(), 10_000);
   }
 
-  stopDashboardUpdates() {
+  _stopDashboardUpdates() {
     if (this.dashboardInterval) {
       clearInterval(this.dashboardInterval);
       this.dashboardInterval = null;
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Lifecycle
+  // ─────────────────────────────────────────────────────────────────────
+
   destroy() {
     this.stop();
+    if (this.voiceConnection) {
+      try { this.voiceConnection.destroy(); } catch {}
+      this.voiceConnection = null;
+    }
   }
 }
