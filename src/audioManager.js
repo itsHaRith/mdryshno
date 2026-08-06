@@ -382,7 +382,7 @@ export class AudioManager {
         });
         resource = createAudioResource(stream.stream, {
           inputType: stream.type,
-          inlineVolume: true
+          inlineVolume: false
         });
       } catch (playDlErr) {
         console.warn(`[AudioManager] Direct YouTube stream blocked for "${this.currentTrack.title}": ${playDlErr.message}. Executing resilient audio stream fallback...`);
@@ -404,7 +404,7 @@ export class AudioManager {
           const stream = await play.stream(scUrl);
           resource = createAudioResource(stream.stream, {
             inputType: stream.type,
-            inlineVolume: true
+            inlineVolume: false
           });
         } else {
           throw new Error(`Could not create audio stream for "${this.currentTrack.title}"`);
