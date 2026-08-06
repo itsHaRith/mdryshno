@@ -252,8 +252,8 @@ export class AudioManager {
       const directVideoId = ytMatch ? ytMatch[1] : null;
 
       if (directVideoId) {
+        const videoUrl = `https://www.youtube.com/watch?v=${directVideoId}`;
         try {
-          const videoUrl = `https://www.youtube.com/watch?v=${directVideoId}`;
           const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`);
           if (oembedRes.ok) {
             const data = await oembedRes.json();
@@ -270,23 +270,8 @@ export class AudioManager {
             throw new Error(`oEmbed status ${oembedRes.status}`);
           }
         } catch (ytUrlErr) {
-          console.warn(`[AudioManager] oEmbed video info resolution failed for ${directVideoId}: ${ytUrlErr.message}. Fallback to Innertube...`);
-          try {
-            const yt = await getInnertube();
-            const info = await yt.getBasicInfo(directVideoId);
-            const details = info.basic_info;
-            const realTitle = typeof details.title === 'string' ? details.title : (details.title?.text || `YouTube Video (${directVideoId})`);
-            resolvedTracks.push(this.formatTrack(
-              realTitle,
-              `https://www.youtube.com/watch?v=${directVideoId}`,
-              (details.duration || 0) * 1000,
-              details.thumbnail?.[0]?.url,
-              details.author || 'YouTube',
-              requesterTag
-            ));
-          } catch (e2) {
-            resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, `https://www.youtube.com/watch?v=${directVideoId}`, 0, null, 'YouTube', requesterTag));
-          }
+          console.warn(`[AudioManager] oEmbed info resolution failed for ${directVideoId}: ${ytUrlErr.message}. Fallback to direct URL format.`);
+          resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, videoUrl, 0, null, 'YouTube', requesterTag));
         }
       } 
       else {
@@ -301,37 +286,66 @@ export class AudioManager {
           const playlist = await play.playlist_info(query, { incomplete: true });
           const videos = await playlist.all_videos();
           for (const video of videos) {
-            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+            const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
+            if (videoId) {
+              const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+              resolvedTracks.push(this.formatTrack(video.title, video.url, (video.durationInSec || 0) * 1000, video.thumbnails?.[0]?.url, video.channel?.name, requesterTag));
+            }
           }
         } 
         else {
-          // Text query: search YouTube ONLY (Innertube first, then play.search fallback)
+          // Text search query: execute play.search first to guarantee valid video.id and video.url
           try {
-            const yt = await getInnertube();
-            let ytVideo = null;
+            console.log(`[AudioManager] Searching YouTube for text query: "${query}"`);
+            const ytSearch = await play.search(query, { limit: 1 });
+            
+            if (ytSearch && ytSearch.length > 0 && (ytSearch[0].id || ytSearch[0].url)) {
+              const video = ytSearch[0];
+              const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
+              
+              if (!videoId) {
+                throw new Error(`Extracted search result had invalid video ID: ${JSON.stringify(video)}`);
+              }
 
-            if (yt) {
-              const searchRes = await yt.search(query);
-              if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
-                ytVideo = searchRes.videos[0];
+              const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+              console.log(`[AudioManager] Search resolved valid YouTube URL: "${videoUrl}" for title: "${video.title}"`);
+              
+              resolvedTracks.push(this.formatTrack(
+                video.title || query,
+                videoUrl,
+                (video.durationInSec || 0) * 1000,
+                video.thumbnails?.[0]?.url || null,
+                video.channel?.name || 'YouTube',
+                requesterTag
+              ));
+            } else {
+              // Fallback to Innertube search with strict video_id extraction
+              console.warn(`[AudioManager] play.search returned empty for "${query}". Falling back to Innertube search...`);
+              const yt = await getInnertube();
+              if (yt) {
+                const searchRes = await yt.search(query);
+                if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
+                  const ytVideo = searchRes.videos[0];
+                  const videoId = ytVideo.video_id || ytVideo.id || (typeof ytVideo.endpoint?.payload?.videoId === 'string' ? ytVideo.endpoint.payload.videoId : null);
+                  
+                  if (videoId) {
+                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                    const realTitle = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
+                    resolvedTracks.push(this.formatTrack(
+                      realTitle,
+                      videoUrl,
+                      (ytVideo.duration?.seconds || 0) * 1000,
+                      ytVideo.thumbnails?.[0]?.url || null,
+                      ytVideo.author?.name || 'YouTube',
+                      requesterTag
+                    ));
+                  }
+                }
               }
             }
 
-            if (ytVideo) {
-              const title = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
-              const videoUrl = `https://www.youtube.com/watch?v=${ytVideo.id}`;
-              const durationMs = (ytVideo.duration?.seconds || 0) * 1000;
-              const thumbnail = ytVideo.thumbnails?.[0]?.url;
-              const author = ytVideo.author?.name || 'YouTube';
-              resolvedTracks.push(this.formatTrack(title, videoUrl, durationMs, thumbnail, author, requesterTag));
-            } else {
-              const ytSearch = await play.search(query, { limit: 1 });
-              if (ytSearch && ytSearch.length > 0) {
-                const video = ytSearch[0];
-                resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-              } else {
-                throw new Error('No video found on YouTube.');
-              }
+            if (resolvedTracks.length === 0) {
+              throw new Error(`No valid YouTube video URL could be resolved for query: "${query}"`);
             }
           } catch (ytSearchErr) {
             console.error(`[AudioManager] YouTube search failed for "${query}":`, ytSearchErr.message);
@@ -379,6 +393,26 @@ export class AudioManager {
       this.audioPlayer.stop(true);
     }
 
+    // Extract and validate YouTube Video ID before any stream extraction attempt
+    const ytMatch = this.currentTrack.url ? this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/) : null;
+    const selectedVideoId = ytMatch ? ytMatch[1] : null;
+
+    console.log('[AudioManager] Stream Extraction Diagnostic:', {
+      query: this.currentTrack.requester || 'User Request',
+      selectedTitle: this.currentTrack.title,
+      selectedVideoId: selectedVideoId,
+      selectedUrl: this.currentTrack.url
+    });
+
+    if (!selectedVideoId) {
+      console.error(`[AudioManager] CRITICAL: Invalid YouTube URL encountered in queue: "${this.currentTrack.url}". Skipping track.`);
+      return this.handleTrackEnd();
+    }
+
+    // Re-normalize URL to standard YouTube watch link
+    const cleanWatchUrl = `https://www.youtube.com/watch?v=${selectedVideoId}`;
+    this.currentTrack.url = cleanWatchUrl;
+
     try {
       let resource = null;
       let lastErr = null;
@@ -391,8 +425,8 @@ export class AudioManager {
 
       for (const clientName of clientRotationList) {
         try {
-          console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for: ${this.currentTrack.title}`);
-          const info = await ytdl.getInfo(this.currentTrack.url, { 
+          console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
+          const info = await ytdl.getInfo(cleanWatchUrl, { 
             client: clientName,
             agent: ytdlCookieAgent || undefined,
             poToken,
@@ -413,14 +447,14 @@ export class AudioManager {
           }
         } catch (cErr) {
           lastErr = cErr;
-          console.warn(`[AudioManager] Client [${clientName}] failed: ${cErr.message}`);
+          console.warn(`[AudioManager] Client [${clientName}] failed for videoId [${selectedVideoId}]: ${cErr.message}`);
         }
       }
 
       if (!resource) {
         try {
-          console.log(`[AudioManager] Client rotation fallback to play.stream for: ${this.currentTrack.title}`);
-          const stream = await play.stream(this.currentTrack.url, {
+          console.log(`[AudioManager] Client rotation fallback to play.stream for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
+          const stream = await play.stream(cleanWatchUrl, {
             discordPlayerCompatibility: true,
             htmldata: false
           });
@@ -435,13 +469,10 @@ export class AudioManager {
 
       if (!resource) {
         try {
-          console.log(`[AudioManager] Client rotation fallback to Innertube for: ${this.currentTrack.title}`);
+          console.log(`[AudioManager] Client rotation fallback to Innertube for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const yt = await getInnertube();
-          const ytMatch = this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-          const videoId = ytMatch ? ytMatch[1] : null;
-
-          if (yt && videoId) {
-            const webStream = await yt.download(videoId, { type: 'audio', quality: 'best' });
+          if (yt && selectedVideoId) {
+            const webStream = await yt.download(selectedVideoId, { type: 'audio', quality: 'best' });
             const nodeStream = Readable.fromWeb(webStream);
             resource = createAudioResource(nodeStream, {
               inputType: StreamType.Arbitrary,
@@ -454,7 +485,7 @@ export class AudioManager {
       }
 
       if (!resource) {
-        throw lastErr || new Error('Unable to extract playable YouTube audio stream');
+        throw lastErr || new Error(`Unable to extract playable YouTube audio stream for videoId [${selectedVideoId}]`);
       }
 
       this.audioResource = resource;
