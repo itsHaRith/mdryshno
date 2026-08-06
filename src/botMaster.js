@@ -27,6 +27,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', activeBots: botProcesses.size });
 });
 
+app.get('/test-play-all', (req, res) => {
+  console.log(`[Master] IPC Trigger: Broadcasting TEST_PLAY to all ${botProcesses.size} workers.`);
+  let count = 0;
+  for (const [botId, child] of botProcesses.entries()) {
+    if (child && child.connected) {
+      child.send({ type: 'TEST_PLAY' });
+      count++;
+    }
+  }
+  res.json({ success: true, triggeredCount: count });
+});
+
 app.listen(PORT, () => {
   console.log(`[Web Server] Ping listener active on port ${PORT}`);
 });
