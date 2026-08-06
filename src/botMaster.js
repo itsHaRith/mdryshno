@@ -7,11 +7,28 @@ import {
   updateCachedAdminRoles 
 } from './adminMiddleware.js';
 import dotenv from 'dotenv';
+import express from 'express';
 
 // Load environment variables
 dotenv.config();
 
 const botInstances = new Map(); // Store active bot instances in memory: botId -> BotInstance
+
+// Initialize express web server to satisfy Render's port checks (enables free tier hosting)
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('🌐 Multi-Bot Music Network Master is Active.');
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', activeBots: botInstances.size });
+});
+
+app.listen(PORT, () => {
+  console.log(`[Web Server] Ping listener active on port ${PORT}`);
+});
 
 /**
  * Initializes and boots the Discord Multi-Bot Engine.
