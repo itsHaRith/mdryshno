@@ -37,8 +37,10 @@ export class BotInstance {
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot || !message.guild) return;
 
-      // Ensure message is in the bot's bound text channel
-      if (message.channel.id !== this.config.text_channel_id) return;
+      console.log(`[Debug] Message received from ${message.author.tag} in channel ${message.channel.id} (Config Guild: ${this.config.guild_id}): "${message.content}"`);
+
+      // Ensure message is in the bot's designated server (guild)
+      if (message.guild.id !== this.config.guild_id) return;
 
       const content = message.content.trim();
       const lowerContent = content.toLowerCase();
@@ -64,6 +66,10 @@ export class BotInstance {
           }
 
           const query = args.join(' ');
+          
+          // Dynamically redirect the player dashboard to the text channel where the play command was typed
+          this.audioManager.textChannelId = message.channel.id;
+          
           const feedbackMsg = await message.reply('🔍 Searching and resolving audio track...');
           
           const result = await this.audioManager.play(query, message.author.tag);
