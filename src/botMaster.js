@@ -1,4 +1,6 @@
 process.env.SUPABASE_DISABLE_DEPRECATION_WARNING = 'true';
+process.env.SUPABASE_JS_DISABLE_WARNINGS = 'true';
+process.removeAllListeners('warning');
 
 import { fork } from 'child_process';
 import path from 'path';

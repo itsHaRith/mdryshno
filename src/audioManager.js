@@ -15,6 +15,7 @@ import ffmpeg from 'ffmpeg-static';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
 import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
+import { fetchYoutubeAuth } from './config/supabaseClient.js';
 
 // Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
 if (ffmpeg) {
@@ -34,12 +35,19 @@ let innertubeInstance = null;
 async function getInnertube() {
   if (!innertubeInstance) {
     try {
-      const cookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
+      const dbAuth = await fetchYoutubeAuth();
+      const fallbackCookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
+      const cookieHeader = dbAuth?.cookie_header || fallbackCookieString;
+      const poToken = dbAuth?.po_token || undefined;
+      const visitorData = dbAuth?.visitor_data || undefined;
+
       innertubeInstance = await Innertube.create({
-        cookie: cookieString,
+        cookie: cookieHeader,
+        po_token: poToken,
+        visitor_data: visitorData,
         generate_session_locally: true
       });
-      console.log('[AudioManager] Authenticated Innertube instance created with local session generation.');
+      console.log('[AudioManager] Authenticated Innertube instance created with Supabase youtube_auth & local session generation.');
     } catch (e) {
       console.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
     }
@@ -396,10 +404,19 @@ export class AudioManager {
       let lastErr = null;
       const clientRotationList = ['TVHTML5_SIMPLY_EMBEDDED', 'IOS', 'WEB_CREATOR', 'ANDROID', 'WEB'];
 
+      // Fetch dynamic Supabase session authentication (po_token, visitor_data)
+      const dbAuth = await fetchYoutubeAuth();
+      const poToken = dbAuth?.po_token || undefined;
+      const visitorData = dbAuth?.visitor_data || undefined;
+
       for (const clientName of clientRotationList) {
         try {
           console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for: ${this.currentTrack.title}`);
-          const info = await ytdl.getInfo(this.currentTrack.url, { client: clientName });
+          const info = await ytdl.getInfo(this.currentTrack.url, { 
+            client: clientName,
+            poToken,
+            visitorData
+          });
           const formats = info?.formats || [];
           const audioFormats = ytdl.filterFormats(formats, 'audioonly');
           const targetFormat = audioFormats.length > 0 ? audioFormats[0] : formats[0];

@@ -1,3 +1,7 @@
+process.env.SUPABASE_DISABLE_DEPRECATION_WARNING = 'true';
+process.env.SUPABASE_JS_DISABLE_WARNINGS = 'true';
+process.removeAllListeners('warning');
+
 import { supabase } from './config/supabaseClient.js';
 import { BotInstance } from './botInstance.js';
 import dotenv from 'dotenv';

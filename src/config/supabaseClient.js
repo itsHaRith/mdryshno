@@ -1,3 +1,6 @@
+process.env.SUPABASE_DISABLE_DEPRECATION_WARNING = 'true';
+process.env.SUPABASE_JS_DISABLE_WARNINGS = 'true';
+
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import WebSocket from 'ws';
@@ -28,5 +31,27 @@ export const supabase = createClient(
     }
   }
 );
+
+/**
+ * Fetches YouTube authentication session parameters from Supabase (youtube_auth table).
+ */
+export async function fetchYoutubeAuth() {
+  try {
+    const { data, error } = await supabase
+      .from('youtube_auth')
+      .select('cookie_header, po_token, visitor_data')
+      .eq('id', 1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[Supabase] youtube_auth table query warning:', error.message);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn('[Supabase] Failed to fetch youtube_auth session data:', err.message);
+    return null;
+  }
+}
 
 console.log('[Supabase] Client initialized successfully.');
