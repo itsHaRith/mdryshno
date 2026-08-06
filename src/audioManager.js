@@ -22,14 +22,17 @@ if (ffmpeg) {
   process.env.FFMPEG_PATH = ffmpeg;
 }
 
-// Create authenticated ytdl agent using user session cookies
-let ytdlCookieAgent = null;
-try {
-  ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
-  console.log('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
-} catch (agentErr) {
-  console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
-}
+// Register SoundCloud Client ID on startup
+play.getFreeClientID().then((id) => {
+  play.setToken({
+    soundcloud: {
+      client_id: id
+    }
+  });
+  console.log('[AudioManager] SoundCloud free Client ID registered successfully.');
+}).catch((err) => {
+  console.warn('[AudioManager] Failed to register SoundCloud Client ID:', err.message);
+});
 
 const isPlaceholder = (val) => typeof val === 'string' && (
   val.includes('YOUR_COOKIE') || 
@@ -235,7 +238,7 @@ export class AudioManager {
   }
 
   /**
-   * Adds songs (YouTube queries, YouTube URLs, Spotify URLs) to the queue.
+   * Adds songs (SoundCloud queries, SoundCloud URLs, Spotify URLs) to the queue.
    */
   async play(query, requesterTag) {
     if (!this.voiceConnection) {
@@ -245,112 +248,60 @@ export class AudioManager {
     const resolvedTracks = [];
 
     try {
-      const ytMatch = query.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-      const directVideoId = ytMatch ? ytMatch[1] : null;
+      let type;
+      try {
+        type = await play.validate(query);
+      } catch (validateErr) {
+        type = 'search';
+      }
 
-      if (directVideoId) {
+      if (type === 'so_track') {
+        const scData = await play.soundcloud(query);
+        resolvedTracks.push(this.formatTrack(
+          scData.name,
+          scData.url || query,
+          scData.durationInMs || 0,
+          scData.thumbnail || null,
+          scData.user?.name || 'SoundCloud',
+          requesterTag
+        ));
+      }
+      else if (type === 'sp_track') {
+        const spotifyData = await play.spotify(query);
+        const scTrack = await this.searchAndResolveSoundCloud(`${spotifyData.name} ${spotifyData.artists?.[0]?.name || ''}`, requesterTag);
+        if (scTrack) resolvedTracks.push(scTrack);
+      }
+      else if (type === 'sp_album' || type === 'sp_playlist') {
+        const spotifyData = await play.spotify(query);
+        const fetchedTracks = await spotifyData.all_tracks();
+        
+        const chunk = fetchedTracks.slice(0, 15);
+        const promises = chunk.map(track => this.searchAndResolveSoundCloud(`${track.name} ${track.artists?.[0]?.name || ''}`, requesterTag));
+        const results = await Promise.all(promises);
+        for (const track of results) {
+          if (track) resolvedTracks.push(track);
+        }
+      }
+      else if (query.includes('youtube.com') || query.includes('youtu.be')) {
         try {
-          const videoUrl = `https://www.youtube.com/watch?v=${directVideoId}`;
-          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`);
+          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(query)}&format=json`);
           if (oembedRes.ok) {
             const data = await oembedRes.json();
-            console.log(`[AudioManager] oEmbed resolved title for ${directVideoId}: "${data.title}"`);
-            resolvedTracks.push(this.formatTrack(
-              data.title || 'YouTube Video',
-              videoUrl,
-              0,
-              data.thumbnail_url || null,
-              data.author_name || 'YouTube',
-              requesterTag
-            ));
+            const scTrack = await this.searchAndResolveSoundCloud(data.title, requesterTag);
+            if (scTrack) resolvedTracks.push(scTrack);
           } else {
-            throw new Error(`oEmbed status ${oembedRes.status}`);
+            const scTrack = await this.searchAndResolveSoundCloud(query, requesterTag);
+            if (scTrack) resolvedTracks.push(scTrack);
           }
-        } catch (ytUrlErr) {
-          console.warn(`[AudioManager] oEmbed video info resolution failed for ${directVideoId}: ${ytUrlErr.message}. Fallback to Innertube...`);
-          try {
-            const yt = await getInnertube();
-            const info = await yt.getBasicInfo(directVideoId);
-            const details = info.basic_info;
-            const realTitle = typeof details.title === 'string' ? details.title : (details.title?.text || `YouTube Video (${directVideoId})`);
-            resolvedTracks.push(this.formatTrack(
-              realTitle,
-              `https://www.youtube.com/watch?v=${directVideoId}`,
-              (details.duration || 0) * 1000,
-              details.thumbnail?.[0]?.url,
-              details.author || 'YouTube',
-              requesterTag
-            ));
-          } catch (e2) {
-            resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, `https://www.youtube.com/watch?v=${directVideoId}`, 0, null, 'YouTube', requesterTag));
-          }
+        } catch (e) {
+          const scTrack = await this.searchAndResolveSoundCloud(query, requesterTag);
+          if (scTrack) resolvedTracks.push(scTrack);
         }
-      } 
+      }
       else {
-        let type;
-        try {
-          type = await play.validate(query);
-        } catch (validateErr) {
-          type = 'search';
-        } 
-
-        if (type === 'yt_playlist') {
-          const playlist = await play.playlist_info(query, { incomplete: true });
-          const videos = await playlist.all_videos();
-          for (const video of videos) {
-            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-          }
-        } 
-        else if (type === 'sp_track') {
-          const spotifyData = await play.spotify(query);
-          const ytTrack = await this.searchAndResolveSpotify(spotifyData, requesterTag);
-          if (ytTrack) resolvedTracks.push(ytTrack);
-        } 
-        else if (type === 'sp_album' || type === 'sp_playlist') {
-          const spotifyData = await play.spotify(query);
-          const fetchedTracks = await spotifyData.all_tracks();
-          
-          const chunk = fetchedTracks.slice(0, 15);
-          const promises = chunk.map(track => this.searchAndResolveSpotify(track, requesterTag));
-          const results = await Promise.all(promises);
-          for (const track of results) {
-            if (track) resolvedTracks.push(track);
-          }
-        } 
-        else {
-          // Text query: search YouTube ONLY (Innertube first, then play.search fallback)
-          try {
-            const yt = await getInnertube();
-            let ytVideo = null;
-
-            if (yt) {
-              const searchRes = await yt.search(query);
-              if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
-                ytVideo = searchRes.videos[0];
-              }
-            }
-
-            if (ytVideo) {
-              const title = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
-              const videoUrl = `https://www.youtube.com/watch?v=${ytVideo.id}`;
-              const durationMs = (ytVideo.duration?.seconds || 0) * 1000;
-              const thumbnail = ytVideo.thumbnails?.[0]?.url;
-              const author = ytVideo.author?.name || 'YouTube';
-              resolvedTracks.push(this.formatTrack(title, videoUrl, durationMs, thumbnail, author, requesterTag));
-            } else {
-              const ytSearch = await play.search(query, { limit: 1 });
-              if (ytSearch && ytSearch.length > 0) {
-                const video = ytSearch[0];
-                resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-              } else {
-                throw new Error('No video found on YouTube.');
-              }
-            }
-          } catch (ytSearchErr) {
-            console.error(`[AudioManager] YouTube search failed for "${query}":`, ytSearchErr.message);
-            throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
-          }
-        }
+        // Text query (Arabic or English): Search SoundCloud directly
+        const scTrack = await this.searchAndResolveSoundCloud(query, requesterTag);
+        if (scTrack) resolvedTracks.push(scTrack);
       }
     } catch (err) {
       console.error(`[AudioManager] Error resolving play query "${query}":`, err.message);
@@ -358,7 +309,7 @@ export class AudioManager {
     }
 
     if (resolvedTracks.length === 0) {
-      return { success: false, error: 'Could not resolve query to any playable YouTube media.' };
+      return { success: false, error: 'Could not resolve query on SoundCloud.' };
     }
 
     this.queue.push(...resolvedTracks);
@@ -373,42 +324,25 @@ export class AudioManager {
   }
 
   /**
-   * Resolves Spotify metadata into an equivalent streamable YouTube video object.
+   * Resolves search query metadata into an equivalent streamable SoundCloud track object.
    */
-  async searchAndResolveSpotify(spTrack, requesterTag) {
-    const searchString = `${spTrack.name} ${spTrack.artists?.[0]?.name || ''}`;
+  async searchAndResolveSoundCloud(searchString, requesterTag) {
     try {
-      const yt = await getInnertube();
-      if (yt) {
-        const searchRes = await yt.search(searchString);
-        if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
-          const video = searchRes.videos[0];
-          const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
-          return this.formatTrack(
-            spTrack.name, 
-            videoUrl, 
-            spTrack.durationInMs || ((video.duration?.seconds || 0) * 1000), 
-            spTrack.thumbnail?.url || video.thumbnails?.[0]?.url, 
-            spTrack.artists?.map(a => a.name).join(', ') || video.author?.name, 
-            requesterTag
-          );
-        }
-      }
-
-      const ytSearch = await play.search(searchString, { limit: 1 });
-      if (ytSearch && ytSearch.length > 0) {
-        const video = ytSearch[0];
+      const scSearch = await play.search(searchString, { source: { soundcloud: 'tracks' }, limit: 1 });
+      if (scSearch && scSearch.length > 0) {
+        const track = scSearch[0];
+        const streamUrl = track.url || track.permalink_url || track.permalink;
         return this.formatTrack(
-          spTrack.name, 
-          video.url, 
-          spTrack.durationInMs || (video.durationInSec * 1000), 
-          spTrack.thumbnail?.url || video.thumbnails[0]?.url, 
-          spTrack.artists?.map(a => a.name).join(', ') || video.channel?.name, 
+          track.name,
+          streamUrl,
+          track.durationInMs || ((track.durationInSec || 0) * 1000),
+          track.thumbnail || null,
+          track.user?.name || track.publisher?.artist || 'SoundCloud',
           requesterTag
         );
       }
     } catch (err) {
-      console.warn(`[AudioManager] Failed Spotify translation for "${searchString}":`, err.message);
+      console.warn(`[AudioManager] SoundCloud search failed for "${searchString}":`, err.message);
     }
     return null;
   }
@@ -434,82 +368,13 @@ export class AudioManager {
     }
 
     try {
-      let resource = null;
-      let lastErr = null;
-      const clientRotationList = ['TVHTML5_SIMPLY_EMBEDDED', 'IOS', 'WEB_CREATOR', 'ANDROID', 'WEB'];
-
-      // Fetch dynamic validated Supabase session authentication (cookieHeader, poToken, visitorData)
-      const auth = await getValidYouTubeAuth();
-      const poToken = auth.poToken;
-      const visitorData = auth.visitorData;
-
-      for (const clientName of clientRotationList) {
-        try {
-          console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for: ${this.currentTrack.title}`);
-          const info = await ytdl.getInfo(this.currentTrack.url, { 
-            client: clientName,
-            agent: ytdlCookieAgent || undefined,
-            poToken,
-            visitorData
-          });
-          const formats = info?.formats || [];
-          const audioFormats = ytdl.filterFormats(formats, 'audioonly');
-          const targetFormat = audioFormats.length > 0 ? audioFormats[0] : formats[0];
-
-          if (targetFormat && targetFormat.url) {
-            console.log(`[AudioManager] Client [${clientName}] returned valid audio stream format (itag: ${targetFormat.itag})`);
-            const stream = ytdl.downloadFromInfo(info, { format: targetFormat, highWaterMark: 1 << 25 });
-            resource = createAudioResource(stream, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: false
-            });
-            if (resource) break;
-          }
-        } catch (cErr) {
-          lastErr = cErr;
-          console.warn(`[AudioManager] Client [${clientName}] failed: ${cErr.message}`);
-        }
-      }
-
-      if (!resource) {
-        try {
-          console.log(`[AudioManager] Client rotation fallback to play.stream for: ${this.currentTrack.title}`);
-          const stream = await play.stream(this.currentTrack.url, {
-            discordPlayerCompatibility: true,
-            htmldata: false
-          });
-          resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
-            inlineVolume: false
-          });
-        } catch (playErr) {
-          console.warn(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
-        }
-      }
-
-      if (!resource) {
-        try {
-          console.log(`[AudioManager] Client rotation fallback to Innertube for: ${this.currentTrack.title}`);
-          const yt = await getInnertube();
-          const ytMatch = this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
-          const videoId = ytMatch ? ytMatch[1] : null;
-
-          if (yt && videoId) {
-            const webStream = await yt.download(videoId, { type: 'audio', quality: 'best' });
-            const nodeStream = Readable.fromWeb(webStream);
-            resource = createAudioResource(nodeStream, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: false
-            });
-          }
-        } catch (inErr) {
-          console.warn(`[AudioManager] Innertube download fallback failed: ${inErr.message}`);
-        }
-      }
-
-      if (!resource) {
-        throw lastErr || new Error('Unable to extract playable YouTube audio stream');
-      }
+      console.log(`[AudioManager] Streaming SoundCloud audio for: ${this.currentTrack.title} (${this.currentTrack.url})`);
+      const stream = await play.stream(this.currentTrack.url);
+      
+      const resource = createAudioResource(stream.stream, {
+        inputType: stream.type,
+        inlineVolume: false
+      });
 
       this.audioResource = resource;
       if (this.audioResource.volume) {
