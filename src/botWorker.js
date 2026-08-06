@@ -2,7 +2,17 @@ import { supabase } from './config/supabaseClient.js';
 import { BotInstance } from './botInstance.js';
 import dotenv from 'dotenv';
 
+// Load environment variables
 dotenv.config();
+
+// Production Safeguard: Catch leaked background rejections from play-dl or other libraries
+process.on('unhandledRejection', (reason, promise) => {
+  console.warn('[Worker-Global] Caught Unhandled Rejection:', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Worker-Global] Caught Uncaught Exception:', err.message || err);
+});
 
 const botConfigId = process.argv[2];
 
