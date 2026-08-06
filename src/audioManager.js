@@ -22,17 +22,14 @@ if (ffmpeg) {
   process.env.FFMPEG_PATH = ffmpeg;
 }
 
-// Register SoundCloud Client ID on startup
-play.getFreeClientID().then((id) => {
-  play.setToken({
-    soundcloud: {
-      client_id: id
-    }
-  });
-  console.log('[AudioManager] SoundCloud free Client ID registered successfully.');
-}).catch((err) => {
-  console.warn('[AudioManager] Failed to register SoundCloud Client ID:', err.message);
-});
+// Create authenticated ytdl agent using user session cookies
+let ytdlCookieAgent = null;
+try {
+  ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
+  console.log('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
+} catch (agentErr) {
+  console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
+}
 
 const isPlaceholder = (val) => typeof val === 'string' && (
   val.includes('YOUR_COOKIE') || 
