@@ -385,43 +385,29 @@ export class AudioManager {
           inlineVolume: true
         });
       } catch (playDlErr) {
-        console.warn(`[AudioManager] play-dl stream failed for "${this.currentTrack.title}": ${playDlErr.message}. Attempting ytdl-core fallback...`);
-        try {
-          const stream = ytdl(this.currentTrack.url, {
-            filter: 'audioonly',
-            highWaterMark: 1 << 25,
-            quality: 'highestaudio'
-          });
+        console.warn(`[AudioManager] Direct YouTube stream blocked for "${this.currentTrack.title}": ${playDlErr.message}. Executing resilient audio stream fallback...`);
+        const cleanTitle = this.currentTrack.title
+          .replace(/\([^)]*\)/g, '')
+          .replace(/\[[^\]]*\]/g, '')
+          .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
+          .trim() || this.currentTrack.title;
 
-          resource = createAudioResource(stream, {
-            inputType: StreamType.Arbitrary,
+        const scSearch = await play.search(cleanTitle, { 
+          source: { soundcloud: 'tracks' }, 
+          limit: 1 
+        });
+
+        if (scSearch && scSearch.length > 0) {
+          const track = scSearch[0];
+          const scUrl = track.permalink_url || track.url;
+          console.log(`[AudioManager] Resilient audio stream obtained for: "${this.currentTrack.title}" (${scUrl})`);
+          const stream = await play.stream(scUrl);
+          resource = createAudioResource(stream.stream, {
+            inputType: stream.type,
             inlineVolume: true
           });
-        } catch (ytdlErr) {
-          console.warn(`[AudioManager] ytdl-core stream failed for "${this.currentTrack.title}": ${ytdlErr.message}. Executing resilient audio stream fallback...`);
-          const cleanTitle = this.currentTrack.title
-            .replace(/\([^)]*\)/g, '')
-            .replace(/\[[^\]]*\]/g, '')
-            .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
-            .trim() || this.currentTrack.title;
-
-          const scSearch = await play.search(cleanTitle, { 
-            source: { soundcloud: 'tracks' }, 
-            limit: 1 
-          });
-
-          if (scSearch && scSearch.length > 0) {
-            const track = scSearch[0];
-            const scUrl = track.permalink_url || track.url;
-            console.log(`[AudioManager] Resilient audio stream obtained for: "${this.currentTrack.title}" (${scUrl})`);
-            const stream = await play.stream(scUrl);
-            resource = createAudioResource(stream.stream, {
-              inputType: stream.type,
-              inlineVolume: true
-            });
-          } else {
-            throw new Error(`Could not create audio stream for "${this.currentTrack.title}"`);
-          }
+        } else {
+          throw new Error(`Could not create audio stream for "${this.currentTrack.title}"`);
         }
       }
 
