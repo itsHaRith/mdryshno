@@ -371,9 +371,17 @@ export class AudioManager {
           inlineVolume: true
         });
       } catch (streamErr) {
-        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting SoundCloud fallback for: ${this.currentTrack.title}`);
+        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting cleaned SoundCloud fallback for: ${this.currentTrack.title}`);
         try {
-          const scSearch = await play.search(this.currentTrack.title, { 
+          // Clean YouTube noise like (Official Video), [4K], etc. so SoundCloud search succeeds
+          const cleanTitle = this.currentTrack.title
+            .replace(/\([^)]*\)/g, '')
+            .replace(/\[[^\]]*\]/g, '')
+            .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
+            .trim() || this.currentTrack.title;
+
+          console.log(`[AudioManager] Searching SoundCloud with cleaned title: "${cleanTitle}"`);
+          const scSearch = await play.search(cleanTitle, { 
             source: { soundcloud: 'tracks' }, 
             limit: 1 
           });
@@ -398,7 +406,7 @@ export class AudioManager {
               this.currentTrack.thumbnail = scThumb;
             }
           } else {
-            throw new Error('No results on SoundCloud');
+            throw new Error(`No results on SoundCloud for "${cleanTitle}"`);
           }
         } catch (scErr) {
           console.error('[AudioManager] SoundCloud fallback failed:', scErr.message);
@@ -407,7 +415,9 @@ export class AudioManager {
       }
 
       this.audioResource = resource;
-      this.audioResource.volume.setVolume(this.volume / 100);
+      if (this.audioResource.volume) {
+        this.audioResource.volume.setVolume(this.volume / 100);
+      }
       this.audioPlayer.play(this.audioResource);
 
       await this.updateDashboard(true);
