@@ -10,7 +10,7 @@ import {
 } from '@discordjs/voice';
 import { Readable } from 'stream';
 import play from 'play-dl';
-import ytdl from '@distube/ytdl-core';
+import ytdl from 'ytdl-core-enhanced';
 import ffmpeg from 'ffmpeg-static';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
@@ -427,14 +427,14 @@ export class AudioManager {
         try {
           console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const info = await ytdl.getInfo(cleanWatchUrl, { 
-            client: clientName,
-            agent: ytdlCookieAgent || undefined,
-            poToken,
-            visitorData
+            requestOptions: {
+              headers: {
+                cookie: auth.cookieHeader
+              }
+            }
           });
           const formats = info?.formats || [];
-          const audioFormats = ytdl.filterFormats(formats, 'audioonly');
-          const targetFormat = audioFormats.length > 0 ? audioFormats[0] : formats[0];
+          const targetFormat = formats.find(f => f.hasAudio && f.url) || formats[0];
 
           if (targetFormat && targetFormat.url) {
             console.log(`[AudioManager] Client [${clientName}] returned valid audio stream format (itag: ${targetFormat.itag})`);
