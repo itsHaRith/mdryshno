@@ -437,13 +437,16 @@ export class AudioManager {
           const targetFormat = formats.find(f => f.hasAudio && f.url) || formats[0];
 
           if (targetFormat && targetFormat.url) {
-            console.log(`[AudioManager] Client [${clientName}] returned valid audio stream format (itag: ${targetFormat.itag})`);
+            console.log(`[AudioManager] Valid stream format selected: itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", audioBitrate=${targetFormat.audioBitrate || 'N/A'}, url_present=true`);
             const stream = ytdl.downloadFromInfo(info, { format: targetFormat, highWaterMark: 1 << 25 });
             resource = createAudioResource(stream, {
               inputType: StreamType.Arbitrary,
               inlineVolume: false
             });
-            if (resource) break;
+            if (resource) {
+              console.log(`[AudioManager] AudioResource created successfully for track: "${this.currentTrack.title}"`);
+              break;
+            }
           }
         } catch (cErr) {
           lastErr = cErr;
