@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { AudioManager } from './audioManager.js';
 import { getPrefix, setPrefix, isAdmin } from './adminMiddleware.js';
 import { buildTutorialEmbed, buildAdminHelpEmbed } from './uiBuilder.js';
+import { logger } from './utils/logger.js';
 
 const processedMessages = new Set();
 
@@ -27,7 +28,7 @@ export class BotInstance {
     });
 
     this.client.once(Events.ClientReady, async () => {
-      console.log(`[BotInstance] Bot logged in: ${this.client.user.tag} (ID: ${this.config.id})`);
+      logger.info(`[BotInstance] Bot connected: ${this.client.user.tag} (ID: ${this.config.id})`);
       
       // Instantiate and connect the audio manager
       this.audioManager = new AudioManager(this.client, this.config);
@@ -35,6 +36,17 @@ export class BotInstance {
       
       this.initialized = true;
     });
+
+    try {
+      await this.client.login(this.config.token);
+    } catch (loginErr) {
+      if (loginErr.code === 'DisallowedIntents' || loginErr.message?.toLowerCase().includes('disallowed intents')) {
+        logger.error(`❌ [BotInstance] Login failed for Bot "${this.config.bot_name}" (ID: ${this.config.id}): Disallowed Gateway Intents.`);
+        logger.error(`👉 ACTION REQUIRED: Enable "MESSAGE CONTENT INTENT" and "SERVER MEMBERS INTENT" in the Discord Developer Portal under Bot > Privileged Gateway Intents.`);
+      } else {
+        logger.error(`❌ [BotInstance] Login failed for Bot "${this.config.bot_name}": ${loginErr.message}`);
+      }
+    }
 
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot || !message.guild) return;
@@ -59,7 +71,7 @@ export class BotInstance {
       const userVoiceChannelId = member?.voice?.channelId;
       if (userVoiceChannelId !== this.config.voice_channel_id) return;
 
-      console.log(`[Debug] Message accepted by bot ${this.config.bot_name} in channel ${message.channel.id}: "${message.content}"`);
+      logger.debug(`[BotInstance] Message accepted by bot ${this.config.bot_name} in channel ${message.channel.id}: "${message.content}"`);
 
       const content = message.content.trim();
       const lowerContent = content.toLowerCase();

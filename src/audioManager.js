@@ -16,6 +16,7 @@ import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
 import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
 import { fetchYoutubeAuth } from './config/supabaseClient.js';
+import { logger } from './utils/logger.js';
 
 // Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
 if (ffmpeg) {
@@ -26,9 +27,9 @@ if (ffmpeg) {
 let ytdlCookieAgent = null;
 try {
   ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
-  console.log('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
+  logger.info('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
 } catch (agentErr) {
-  console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
+  logger.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
 }
 
 const isPlaceholder = (val) => typeof val === 'string' && (
@@ -69,9 +70,9 @@ async function getInnertube() {
         visitor_data: auth.visitorData,
         generate_session_locally: true
       });
-      console.log('[AudioManager] Authenticated Innertube instance created with local session generation.');
+      logger.info('[AudioManager] Authenticated Innertube instance created.');
     } catch (e) {
-      console.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
+      logger.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
     }
   }
   return innertubeInstance;
@@ -84,41 +85,11 @@ getValidYouTubeAuth().then((auth) => {
       cookie: auth.cookieHeader
     }
   }).then(() => {
-    console.log('[AudioManager] Registered YouTube session cookie in play-dl.');
+    logger.info('[AudioManager] Registered YouTube session cookie in play-dl.');
   }).catch((err) => {
-    console.warn('[AudioManager] Failed to set play-dl youtube cookie:', err.message);
+    logger.warn('[AudioManager] Failed to set play-dl youtube cookie:', err.message);
   });
 });
-
-// Initialize Spotify client if credentials exist in environment variables
-if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
-  play.setToken({
-    spotify: {
-      client_id: process.env.SPOTIFY_CLIENT_ID,
-      client_secret: process.env.SPOTIFY_CLIENT_SECRET,
-      market: 'US'
-    }
-  }).then(() => {
-    console.log('[AudioManager] Spotify credentials registered successfully.');
-  }).catch((err) => {
-    console.warn('[AudioManager] Spotify credential initialization failed. Falling back to public scraper:', err.message);
-  });
-}
-
-// Initialize YouTube cookies if present in environment variables (required to bypass bot validation)
-if (process.env.YOUTUBE_COOKIE) {
-  play.setToken({
-    youtube: {
-      cookie: process.env.YOUTUBE_COOKIE
-    }
-  }).then(() => {
-    console.log('[AudioManager] YouTube cookies registered successfully.');
-  }).catch((err) => {
-    console.warn('[AudioManager] Failed to register YouTube cookies:', err.message);
-  });
-}
-
-
 
 export class AudioManager {
   constructor(client, botConfig) {
@@ -150,11 +121,12 @@ export class AudioManager {
     this.audioPlayer = createAudioPlayer();
 
     this.audioPlayer.on('stateChange', (oldState, newState) => {
-      console.log(`[Debug Player] Bot ${this.botConfig.bot_name} state changed from ${oldState.status} to ${newState.status}`);
+      logger.debug(`[AudioPlayer] Bot ${this.botConfig.bot_name} state changed: ${oldState.status} ===> ${newState.status}`);
     });
 
     this.audioPlayer.on(AudioPlayerStatus.Playing, () => {
       this.isPaused = false;
+      logger.info(`[AudioPlayer] Track started playing on Bot ${this.botConfig.bot_name}: "${this.currentTrack?.title || 'Unknown'}"`);
       this.startDashboardUpdates();
     });
 
@@ -169,7 +141,7 @@ export class AudioManager {
     });
 
     this.audioPlayer.on('error', (error) => {
-      console.error(`[AudioManager] Error on bot ${this.botConfig.bot_name}:`, error.message);
+      logger.error(`[AudioManager] AudioPlayer error on bot ${this.botConfig.bot_name}: ${error.message}`);
       this.stopDashboardUpdates();
       this.handleTrackEnd();
     });
@@ -185,16 +157,28 @@ export class AudioManager {
         throw new Error(`Channel ${this.voiceChannelId} is not a valid voice channel.`);
       }
 
-      // Disconnect any server-side ghost session on Discord before initializing local voice connection
       const guild = channel.guild;
       const me = guild.members.me || await guild.members.fetch(this.client.user.id).catch(() => null);
-      if (me && me.voice.channelId) {
-        console.log(`[AudioManager] Bot is already registered in voice channel ${me.voice.channelId} on Discord servers. Disconnecting to reset session...`);
+
+      // Task 6: Voice Connection Reuse Safeguard
+      if (
+        this.voiceConnection &&
+        this.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed &&
+        this.voiceConnection.state.status !== VoiceConnectionStatus.Disconnected &&
+        me?.voice?.channelId === this.voiceChannelId
+      ) {
+        logger.info(`[AudioManager] Reusing active VoiceConnection for Bot ${this.botConfig.bot_name} in channel: ${channel.name}`);
+        return;
+      }
+
+      // Disconnect server-side ghost session if channel has changed
+      if (me && me.voice.channelId && me.voice.channelId !== this.voiceChannelId) {
+        logger.info(`[AudioManager] Bot channel target changed. Disconnecting from old voice channel ${me.voice.channelId}...`);
         try {
           await me.voice.disconnect();
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (e) {
-          console.warn('[AudioManager] Failed to disconnect server voice session:', e.message);
+          logger.warn('[AudioManager] Failed to disconnect old server voice session:', e.message);
         }
       }
 
@@ -207,30 +191,28 @@ export class AudioManager {
       });
 
       this.voiceConnection.on('stateChange', (oldState, newState) => {
-        console.log(`[Debug Connection] Bot ${this.botConfig.bot_name} state changed from ${oldState.status} to ${newState.status}`);
+        logger.debug(`[VoiceConnection] Bot ${this.botConfig.bot_name} state changed: ${oldState.status} ===> ${newState.status}`);
       });
 
       this.voiceConnection.on('error', (error) => {
-        console.error(`[AudioManager] VoiceConnection error on bot ${this.botConfig.bot_name}:`, error.message);
+        logger.error(`[AudioManager] VoiceConnection error on bot ${this.botConfig.bot_name}: ${error.message}`);
       });
 
       this.voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
         try {
-          // Attempt reconnection if disconnected
           await Promise.race([
             entersState(this.voiceConnection, VoiceConnectionStatus.Signalling, 5000),
             entersState(this.voiceConnection, VoiceConnectionStatus.Connecting, 5000)
           ]);
         } catch {
-          // Reconnection failed, cleanup
           this.destroy();
         }
       });
 
       this.voiceConnection.subscribe(this.audioPlayer);
-      console.log(`[AudioManager] Bot ${this.botConfig.bot_name} joined and locked Voice Channel: ${channel.name}`);
+      logger.info(`[AudioManager] Bot ${this.botConfig.bot_name} connected to Voice Channel: ${channel.name}`);
     } catch (err) {
-      console.error(`[AudioManager] Bot ${this.botConfig.bot_name} failed to join Voice Channel:`, err.message);
+      logger.error(`[AudioManager] Bot ${this.botConfig.bot_name} failed to join Voice Channel: ${err.message}`);
     }
   }
 
@@ -296,7 +278,7 @@ export class AudioManager {
         else {
           // Text search query: execute play.search first to guarantee valid video.id and video.url
           try {
-            console.log(`[AudioManager] Searching YouTube for text query: "${query}"`);
+            logger.debug(`[AudioManager] Searching YouTube for text query: "${query}"`);
             const ytSearch = await play.search(query, { limit: 1 });
             
             if (ytSearch && ytSearch.length > 0 && (ytSearch[0].id || ytSearch[0].url)) {
@@ -308,7 +290,7 @@ export class AudioManager {
               }
 
               const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-              console.log(`[AudioManager] Search resolved valid YouTube URL: "${videoUrl}" for title: "${video.title}"`);
+              logger.info(`[AudioManager] Search resolved valid YouTube track: "${video.title}" (${videoUrl})`);
               
               resolvedTracks.push(this.formatTrack(
                 video.title || query,
@@ -319,24 +301,31 @@ export class AudioManager {
                 requesterTag
               ));
             } else {
-              // Fallback to Innertube search with strict video_id extraction
-              console.warn(`[AudioManager] play.search returned empty for "${query}". Falling back to Innertube search...`);
+              // Fallback to Innertube search with safe video filtering
+              logger.warn(`[AudioManager] play.search returned empty for "${query}". Falling back to Innertube search...`);
               const yt = await getInnertube();
               if (yt) {
                 const searchRes = await yt.search(query);
-                if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
-                  const ytVideo = searchRes.videos[0];
+                const rawVideos = searchRes?.videos || [];
+                const validVideos = rawVideos.filter(v => v && (v.video_id || v.id || v.endpoint?.payload?.videoId));
+
+                if (validVideos.length > 0) {
+                  const ytVideo = validVideos[0];
                   const videoId = ytVideo.video_id || ytVideo.id || (typeof ytVideo.endpoint?.payload?.videoId === 'string' ? ytVideo.endpoint.payload.videoId : null);
                   
                   if (videoId) {
                     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
                     const realTitle = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
+                    const authorName = ytVideo.author?.name || ytVideo.author?.text || 'YouTube';
+                    
+                    logger.info(`[AudioManager] Innertube search resolved valid YouTube track: "${realTitle}" (${videoUrl})`);
+
                     resolvedTracks.push(this.formatTrack(
                       realTitle,
                       videoUrl,
                       (ytVideo.duration?.seconds || 0) * 1000,
                       ytVideo.thumbnails?.[0]?.url || null,
-                      ytVideo.author?.name || 'YouTube',
+                      authorName,
                       requesterTag
                     ));
                   }
@@ -348,7 +337,7 @@ export class AudioManager {
               throw new Error(`No valid YouTube video URL could be resolved for query: "${query}"`);
             }
           } catch (ytSearchErr) {
-            console.error(`[AudioManager] YouTube search failed for "${query}":`, ytSearchErr.message);
+            logger.warn(`[AudioManager] YouTube search failed for "${query}": ${ytSearchErr.message}`);
             throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
           }
         }
@@ -397,21 +386,24 @@ export class AudioManager {
     const ytMatch = this.currentTrack.url ? this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/) : null;
     const selectedVideoId = ytMatch ? ytMatch[1] : null;
 
-    console.log('[AudioManager] Stream Extraction Diagnostic:', {
+    logger.debug('[AudioManager] Stream Extraction Diagnostic:', {
       query: this.currentTrack.requester || 'User Request',
       selectedTitle: this.currentTrack.title,
       selectedVideoId: selectedVideoId,
-      selectedUrl: this.currentTrack.url
+      selectedUrl: this.currentTrack.url,
+      queueLength: this.queue.length
     });
 
     if (!selectedVideoId) {
-      console.error(`[AudioManager] CRITICAL: Invalid YouTube URL encountered in queue: "${this.currentTrack.url}". Skipping track.`);
+      logger.error(`[AudioManager] Invalid YouTube URL in queue: "${this.currentTrack.url}". Skipping track.`);
       return this.handleTrackEnd();
     }
 
     // Re-normalize URL to standard YouTube watch link
     const cleanWatchUrl = `https://www.youtube.com/watch?v=${selectedVideoId}`;
     this.currentTrack.url = cleanWatchUrl;
+
+    const startTime = Date.now();
 
     try {
       let resource = null;
@@ -420,12 +412,10 @@ export class AudioManager {
 
       // Fetch dynamic validated Supabase session authentication (cookieHeader, poToken, visitorData)
       const auth = await getValidYouTubeAuth();
-      const poToken = auth.poToken;
-      const visitorData = auth.visitorData;
 
       for (const clientName of clientRotationList) {
         try {
-          console.log(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
+          logger.debug(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const info = await ytdl.getInfo(cleanWatchUrl, { 
             requestOptions: {
               headers: {
@@ -437,26 +427,27 @@ export class AudioManager {
           const targetFormat = formats.find(f => f.hasAudio && f.url) || formats[0];
 
           if (targetFormat && targetFormat.url) {
-            console.log(`[AudioManager] Valid stream format selected: itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", audioBitrate=${targetFormat.audioBitrate || 'N/A'}, url_present=true`);
+            logger.debug(`[AudioManager] Stream format selected: client=${clientName}, itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", bitrate=${targetFormat.audioBitrate || 'N/A'}`);
             const stream = ytdl.downloadFromInfo(info, { format: targetFormat, highWaterMark: 1 << 25 });
             resource = createAudioResource(stream, {
               inputType: StreamType.Arbitrary,
               inlineVolume: false
             });
             if (resource) {
-              console.log(`[AudioManager] AudioResource created successfully for track: "${this.currentTrack.title}"`);
+              const elapsed = Date.now() - startTime;
+              logger.info(`[AudioManager] Stream extracted successfully (${elapsed}ms) for track: "${this.currentTrack.title}"`);
               break;
             }
           }
         } catch (cErr) {
           lastErr = cErr;
-          console.warn(`[AudioManager] Client [${clientName}] failed for videoId [${selectedVideoId}]: ${cErr.message}`);
+          logger.debug(`[AudioManager] Client [${clientName}] failed for videoId [${selectedVideoId}]: ${cErr.message}`);
         }
       }
 
       if (!resource) {
         try {
-          console.log(`[AudioManager] Client rotation fallback to play.stream for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
+          logger.debug(`[AudioManager] Client rotation fallback to play.stream for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const stream = await play.stream(cleanWatchUrl, {
             discordPlayerCompatibility: true,
             htmldata: false
@@ -466,13 +457,13 @@ export class AudioManager {
             inlineVolume: false
           });
         } catch (playErr) {
-          console.warn(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
+          logger.debug(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
         }
       }
 
       if (!resource) {
         try {
-          console.log(`[AudioManager] Client rotation fallback to Innertube for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
+          logger.debug(`[AudioManager] Client rotation fallback to Innertube for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const yt = await getInnertube();
           if (yt && selectedVideoId) {
             const webStream = await yt.download(selectedVideoId, { type: 'audio', quality: 'best' });
@@ -483,7 +474,7 @@ export class AudioManager {
             });
           }
         } catch (inErr) {
-          console.warn(`[AudioManager] Innertube download fallback failed: ${inErr.message}`);
+          logger.debug(`[AudioManager] Innertube download fallback failed: ${inErr.message}`);
         }
       }
 

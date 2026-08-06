@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node src/botMaster.js"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "@distube/ytdl-core": "^4.16.12",
