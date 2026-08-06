@@ -3,7 +3,8 @@ import {
   createAudioPlayer, 
   createAudioResource, 
   AudioPlayerStatus, 
-  VoiceConnectionStatus 
+  VoiceConnectionStatus,
+  entersState
 } from '@discordjs/voice';
 import play from 'play-dl';
 import { buildPlayerDashboard } from './uiBuilder.js';
@@ -90,6 +91,10 @@ export class AudioManager {
         adapterCreator: channel.guild.voiceAdapterCreator,
         selfDeaf: true,
         selfMute: false
+      });
+
+      this.voiceConnection.on('error', (error) => {
+        console.error(`[AudioManager] VoiceConnection error on bot ${this.botConfig.bot_name}:`, error.message);
       });
 
       this.voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
