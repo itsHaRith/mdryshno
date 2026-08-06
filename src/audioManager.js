@@ -5,7 +5,8 @@ import {
   AudioPlayerStatus, 
   VoiceConnectionStatus,
   entersState,
-  StreamType
+  StreamType,
+  getVoiceConnection
 } from '@discordjs/voice';
 import play from 'play-dl';
 import { buildPlayerDashboard } from './uiBuilder.js';
@@ -38,6 +39,18 @@ if (process.env.YOUTUBE_COOKIE) {
   });
 }
 
+// Initialize SoundCloud free client ID on module load
+play.getFreeClientID().then((clientId) => {
+  play.setToken({
+    soundcloud: {
+      client_id: clientId
+    }
+  });
+  console.log('[AudioManager] SoundCloud Client ID registered successfully.');
+}).catch((err) => {
+  console.warn('[AudioManager] Failed to initialize SoundCloud Client ID:', err.message);
+});
+
 export class AudioManager {
   constructor(client, botConfig) {
     this.client = client;
@@ -66,6 +79,10 @@ export class AudioManager {
    */
   initializeAudioPlayer() {
     this.audioPlayer = createAudioPlayer();
+
+    this.audioPlayer.on('stateChange', (oldState, newState) => {
+      console.log(`[Debug Player] Bot ${this.botConfig.bot_name} state changed from ${oldState.status} to ${newState.status}`);
+    });
 
     this.audioPlayer.on(AudioPlayerStatus.Playing, () => {
       this.isPaused = false;
@@ -99,12 +116,29 @@ export class AudioManager {
         throw new Error(`Channel ${this.voiceChannelId} is not a valid voice channel.`);
       }
 
+      // Disconnect any server-side ghost session on Discord before initializing local voice connection
+      const guild = channel.guild;
+      const me = guild.members.me || await guild.members.fetch(this.client.user.id).catch(() => null);
+      if (me && me.voice.channelId) {
+        console.log(`[AudioManager] Bot is already registered in voice channel ${me.voice.channelId} on Discord servers. Disconnecting to reset session...`);
+        try {
+          await me.voice.disconnect();
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } catch (e) {
+          console.warn('[AudioManager] Failed to disconnect server voice session:', e.message);
+        }
+      }
+
       this.voiceConnection = joinVoiceChannel({
         channelId: this.voiceChannelId,
         guildId: this.guildId,
         adapterCreator: channel.guild.voiceAdapterCreator,
         selfDeaf: true,
         selfMute: false
+      });
+
+      this.voiceConnection.on('stateChange', (oldState, newState) => {
+        console.log(`[Debug Connection] Bot ${this.botConfig.bot_name} state changed from ${oldState.status} to ${newState.status}`);
       });
 
       this.voiceConnection.on('error', (error) => {
@@ -252,18 +286,35 @@ export class AudioManager {
           inlineVolume: true
         });
       } catch (streamErr) {
-        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting direct format fallback...`);
-        // Fallback: Fetch video info and find first playable format URL (typically itag 18)
-        const videoInfo = await play.video_info(this.currentTrack.url);
-        const playableFormat = videoInfo.format.find(fmt => fmt.url);
-        if (!playableFormat) {
-          throw new Error('No playable format URL found.');
+        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting SoundCloud fallback for: ${this.currentTrack.title}`);
+        try {
+          const scSearch = await play.search(this.currentTrack.title, { 
+            source: { soundcloud: 'tracks' }, 
+            limit: 1 
+          });
+          
+          if (scSearch && scSearch.length > 0) {
+            const track = scSearch[0];
+            console.log(`[AudioManager] Found SoundCloud fallback track: ${track.title || 'SoundCloud Audio'} (${track.url})`);
+            const stream = await play.stream(track.url);
+            resource = createAudioResource(stream.stream, {
+              inputType: stream.type,
+              inlineVolume: true
+            });
+            // Update current track details for the dashboard
+            this.currentTrack.title = track.title || this.currentTrack.title;
+            this.currentTrack.url = track.url;
+            this.currentTrack.artist = track.publisher?.name || 'SoundCloud Artist';
+            if (track.artwork_url) {
+              this.currentTrack.thumbnail = track.artwork_url;
+            }
+          } else {
+            throw new Error('No results on SoundCloud');
+          }
+        } catch (scErr) {
+          console.error('[AudioManager] SoundCloud fallback failed:', scErr.message);
+          throw new Error(`Both YouTube and SoundCloud failed. YouTube error: ${streamErr.message}`);
         }
-        console.log(`[AudioManager] Streaming direct format URL itag: ${playableFormat.itag}`);
-        resource = createAudioResource(playableFormat.url, {
-          inputType: StreamType.Arbitrary,
-          inlineVolume: true
-        });
       }
 
       this.audioResource = resource;
