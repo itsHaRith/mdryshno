@@ -31,29 +31,58 @@ try {
   console.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
 }
 
+const isPlaceholder = (val) => typeof val === 'string' && (val.includes('YOUR_COOKIE') || val.includes('YOUR_PO_TOKEN') || val.includes('YOUR_VISITOR') || val.trim().length === 0);
+
+async function getValidYouTubeAuth() {
+  const dbAuth = await fetchYoutubeAuth();
+  const fallbackCookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
+  
+  const cookieHeader = (dbAuth?.cookie_header && !isPlaceholder(dbAuth.cookie_header))
+    ? dbAuth.cookie_header
+    : fallbackCookieString;
+
+  const poToken = (dbAuth?.po_token && !isPlaceholder(dbAuth.po_token))
+    ? dbAuth.po_token
+    : undefined;
+
+  const visitorData = (dbAuth?.visitor_data && !isPlaceholder(dbAuth.visitor_data))
+    ? dbAuth.visitor_data
+    : undefined;
+
+  return { cookieHeader, poToken, visitorData };
+}
+
 let innertubeInstance = null;
 async function getInnertube() {
   if (!innertubeInstance) {
     try {
-      const dbAuth = await fetchYoutubeAuth();
-      const fallbackCookieString = USER_YOUTUBE_COOKIES.map(c => `${c.name}=${c.value}`).join('; ');
-      const cookieHeader = dbAuth?.cookie_header || fallbackCookieString;
-      const poToken = dbAuth?.po_token || undefined;
-      const visitorData = dbAuth?.visitor_data || undefined;
-
+      const auth = await getValidYouTubeAuth();
       innertubeInstance = await Innertube.create({
-        cookie: cookieHeader,
-        po_token: poToken,
-        visitor_data: visitorData,
+        cookie: auth.cookieHeader,
+        po_token: auth.poToken,
+        visitor_data: auth.visitorData,
         generate_session_locally: true
       });
-      console.log('[AudioManager] Authenticated Innertube instance created with Supabase youtube_auth & local session generation.');
+      console.log('[AudioManager] Authenticated Innertube instance created with local session generation.');
     } catch (e) {
       console.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
     }
   }
   return innertubeInstance;
 }
+
+// Register YouTube session cookie in play-dl engine
+getValidYouTubeAuth().then((auth) => {
+  play.setToken({
+    youtube: {
+      cookie: auth.cookieHeader
+    }
+  }).then(() => {
+    console.log('[AudioManager] Registered YouTube session cookie in play-dl.');
+  }).catch((err) => {
+    console.warn('[AudioManager] Failed to set play-dl youtube cookie:', err.message);
+  });
+});
 
 // Initialize Spotify client if credentials exist in environment variables
 if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
