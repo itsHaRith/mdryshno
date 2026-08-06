@@ -12,27 +12,23 @@ import { Readable } from 'stream';
 import play from 'play-dl';
 import ytdl from 'ytdl-core-enhanced';
 import ffmpeg from 'ffmpeg-static';
-import { Innertube, Log } from 'youtubei.js';
+import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
 import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
 import { fetchYoutubeAuth } from './config/supabaseClient.js';
 import { logger } from './utils/logger.js';
-
-// Suppress Innertube JIT parser debug warnings (OfficialCardView, HorizontalShelfView, etc.)
-try {
-  Log.setLevel(0);
-} catch (e) {}
 
 // Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
 if (ffmpeg) {
   process.env.FFMPEG_PATH = ffmpeg;
 }
 
-// Create authenticated ytdl agent using user session cookies
+// Build ytdl agent from cookie array — must be passed as options.agent (NOT requestOptions.headers.cookie)
+// Passing via headers triggers "old cookie format" warning and falls back to anonymous defaultAgent
 let ytdlCookieAgent = null;
 try {
   ytdlCookieAgent = ytdl.createAgent(USER_YOUTUBE_COOKIES);
-  logger.info('[AudioManager] Authenticated YouTube Cookie Agent initialized successfully.');
+  logger.info('[AudioManager] Authenticated YouTube Cookie Agent initialized.');
 } catch (agentErr) {
   logger.warn('[AudioManager] Failed to initialize ytdl Cookie Agent:', agentErr.message);
 }
@@ -65,35 +61,67 @@ async function getValidYouTubeAuth() {
 }
 
 let innertubeInstance = null;
+let innertubeInitialized = false;
 async function getInnertube() {
-  if (!innertubeInstance) {
+  if (!innertubeInitialized) {
+    innertubeInitialized = true;
     try {
       const auth = await getValidYouTubeAuth();
       innertubeInstance = await Innertube.create({
-        cookie: auth.cookieHeader,
-        po_token: auth.poToken,
-        visitor_data: auth.visitorData,
-        generate_session_locally: true
+        cookie: auth.cookieHeader || undefined,
+        po_token: auth.poToken || undefined,
+        visitor_data: auth.visitorData || undefined,
+        generate_session_locally: !auth.poToken // only auto-generate if no stored token
       });
-      logger.info('[AudioManager] Authenticated Innertube instance created.');
+      logger.info('[AudioManager] Innertube instance initialized.');
     } catch (e) {
-      logger.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
+      logger.warn('[AudioManager] Failed to initialize Innertube:', e.message);
     }
   }
   return innertubeInstance;
 }
 
-// Register YouTube session cookie in play-dl engine
-getValidYouTubeAuth().then((auth) => {
-  play.setToken({
-    youtube: {
-      cookie: auth.cookieHeader
+// Build a fresh authenticated ytdl agent from current auth (Supabase preferred over local)
+// Returns the agent object with .jar — must be passed as options.agent to getInfo/downloadFromInfo
+async function buildYtdlAgent() {
+  try {
+    const auth = await getValidYouTubeAuth();
+    if (auth.poToken && auth.visitorData) {
+      // Inject poToken + visitorData globally so InnerTube player API includes serviceIntegrityDimensions
+      ytdl.setPoTokenAndVisitorData(auth.poToken, auth.visitorData);
     }
+    // Build cookie array from cookie header string for the agent jar
+    const cookieArray = auth.cookieHeader
+      ? auth.cookieHeader.split(';').map(pair => {
+          const [name, ...rest] = pair.trim().split('=');
+          return { name: name?.trim(), value: rest.join('=').trim(), domain: '.youtube.com', path: '/' };
+        }).filter(c => c.name && c.value)
+      : USER_YOUTUBE_COOKIES;
+    return ytdl.createAgent(cookieArray);
+  } catch (e) {
+    logger.warn('[AudioManager] Failed to build ytdl agent, using static cookies:', e.message);
+    return ytdlCookieAgent;
+  }
+}
+
+// Seed play-dl with cookie string
+getValidYouTubeAuth().then((auth) => {
+  if (!auth.cookieHeader) return;
+  play.setToken({
+    youtube: { cookie: auth.cookieHeader }
   }).then(() => {
-    logger.info('[AudioManager] Registered YouTube session cookie in play-dl.');
+    logger.info('[AudioManager] play-dl cookie registered.');
   }).catch((err) => {
-    logger.warn('[AudioManager] Failed to set play-dl youtube cookie:', err.message);
+    logger.debug('[AudioManager] play-dl setToken skipped:', err.message);
   });
+});
+
+// Seed ytdl poToken + visitorData from Supabase at startup
+getValidYouTubeAuth().then((auth) => {
+  if (auth.poToken && auth.visitorData) {
+    ytdl.setPoTokenAndVisitorData(auth.poToken, auth.visitorData);
+    logger.info('[AudioManager] ytdl poToken + visitorData seeded from Supabase.');
+  }
 });
 
 export class AudioManager {
@@ -426,80 +454,79 @@ export class AudioManager {
     try {
       let resource = null;
       let lastErr = null;
-      const clientRotationList = ['ANDROID', 'IOS', 'WEB_CREATOR', 'MWEB', 'WEB'];
 
-      // Fetch dynamic validated Supabase session authentication (cookieHeader, poToken, visitorData)
-      const auth = await getValidYouTubeAuth();
+      // Build authenticated agent — MUST be passed as options.agent (not headers.cookie)
+      // Passing via headers triggers "old cookie format" warning and bypasses authentication
+      const agent = await buildYtdlAgent();
 
-      for (const clientName of clientRotationList) {
-        try {
-          logger.debug(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
-          const info = await ytdl.getInfo(cleanWatchUrl, { 
-            client: clientName,
-            agent: ytdlCookieAgent || undefined,
-            requestOptions: {
-              headers: {
-                cookie: auth.cookieHeader
-              }
-            }
+      // Tier 1: ytdl-core-enhanced with authenticated agent
+      // The agent carries the cookie jar; ytdl reads it via options.agent.jar
+      try {
+        logger.debug(`[AudioManager] ytdl extraction for videoId [${selectedVideoId}]: "${this.currentTrack.title}"`);
+        const info = await ytdl.getInfo(cleanWatchUrl, {
+          agent,                    // ← This is the correct way — NOT requestOptions.headers.cookie
+          requestOptions: { headers: {} }
+        });
+        const formats = info?.formats || [];
+        // Prefer opus/webm audio-only for lowest latency; fall back to any audio
+        const targetFormat =
+          formats.find(f => f.hasAudio && !f.hasVideo && f.codecs?.includes('opus') && f.url) ||
+          formats.find(f => f.hasAudio && !f.hasVideo && f.url) ||
+          formats.find(f => f.hasAudio && f.url);
+
+        if (targetFormat?.url) {
+          logger.debug(`[AudioManager] Format selected: itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", bitrate=${targetFormat.audioBitrate || 'N/A'}kbps`);
+          const stream = ytdl.downloadFromInfo(info, {
+            format: targetFormat,
+            agent,                  // ← agent also required here so cookie jar populates the download request
+            highWaterMark: 1 << 25
           });
-          const formats = info?.formats || [];
-          const targetFormat = formats.find(f => f.hasAudio && f.url) || formats[0];
+          resource = createAudioResource(stream, { inputType: StreamType.Arbitrary, inlineVolume: false });
+          const elapsed = Date.now() - startTime;
+          logger.info(`[AudioManager] ytdl stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
+        } else {
+          lastErr = new Error('No audio format with URL found in ytdl response');
+          logger.debug(`[AudioManager] ytdl: no suitable audio format for videoId [${selectedVideoId}]`);
+        }
+      } catch (ytdlErr) {
+        lastErr = ytdlErr;
+        logger.debug(`[AudioManager] ytdl failed for [${selectedVideoId}]: ${ytdlErr.message}`);
+      }
 
-          if (targetFormat && targetFormat.url) {
-            logger.debug(`[AudioManager] Stream format selected: client=${clientName}, itag=${targetFormat.itag}, mimeType="${targetFormat.mimeType || 'unknown'}", bitrate=${targetFormat.audioBitrate || 'N/A'}`);
-            const stream = ytdl.downloadFromInfo(info, { format: targetFormat, highWaterMark: 1 << 25 });
-            resource = createAudioResource(stream, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: false
-            });
-            if (resource) {
-              const elapsed = Date.now() - startTime;
-              logger.info(`[AudioManager] Stream extracted successfully (${elapsed}ms) for track: "${this.currentTrack.title}"`);
-              break;
-            }
+      // Tier 2: youtubei.js authenticated download (already has cookies + poToken from Innertube.create)
+      if (!resource) {
+        try {
+          logger.debug(`[AudioManager] Innertube fallback for videoId [${selectedVideoId}]`);
+          const yt = await getInnertube();
+          if (yt) {
+            const webStream = await yt.download(selectedVideoId, { type: 'audio', quality: 'best' });
+            const nodeStream = Readable.fromWeb(webStream);
+            resource = createAudioResource(nodeStream, { inputType: StreamType.Arbitrary, inlineVolume: false });
+            const elapsed = Date.now() - startTime;
+            logger.info(`[AudioManager] Innertube stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
           }
-        } catch (cErr) {
-          lastErr = cErr;
-          logger.debug(`[AudioManager] Client [${clientName}] failed for videoId [${selectedVideoId}]: ${cErr.message}`);
+        } catch (inErr) {
+          lastErr = inErr;
+          logger.debug(`[AudioManager] Innertube fallback failed: ${inErr.message}`);
         }
       }
 
+      // Tier 3: play-dl (uses internal cookie set via play.setToken)
       if (!resource) {
         try {
-          logger.debug(`[AudioManager] Client rotation fallback to play.stream for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
-          const stream = await play.stream(cleanWatchUrl, {
-            discordPlayerCompatibility: true,
-            htmldata: false
-          });
-          resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
-            inlineVolume: false
-          });
+          logger.debug(`[AudioManager] play.stream fallback for videoId [${selectedVideoId}]`);
+          const stream = await play.stream(cleanWatchUrl, { discordPlayerCompatibility: true });
+          resource = createAudioResource(stream.stream, { inputType: stream.type, inlineVolume: false });
+          const elapsed = Date.now() - startTime;
+          logger.info(`[AudioManager] play-dl stream extracted (${elapsed}ms): "${this.currentTrack.title}"`);
         } catch (playErr) {
+          lastErr = playErr;
           logger.debug(`[AudioManager] play.stream fallback failed: ${playErr.message}`);
         }
       }
 
       if (!resource) {
-        try {
-          logger.debug(`[AudioManager] Client rotation fallback to Innertube for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
-          const yt = await getInnertube();
-          if (yt && selectedVideoId) {
-            const webStream = await yt.download(selectedVideoId, { type: 'audio', quality: 'best' });
-            const nodeStream = Readable.fromWeb(webStream);
-            resource = createAudioResource(nodeStream, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: false
-            });
-          }
-        } catch (inErr) {
-          logger.debug(`[AudioManager] Innertube download fallback failed: ${inErr.message}`);
-        }
-      }
-
-      if (!resource) {
-        throw lastErr || new Error(`Unable to extract playable YouTube audio stream for videoId [${selectedVideoId}]`);
+        throw lastErr || new Error(`All stream extraction methods exhausted for videoId [${selectedVideoId}]`);
       }
 
       this.audioResource = resource;
@@ -507,10 +534,9 @@ export class AudioManager {
         this.audioResource.volume.setVolume(this.volume / 100);
       }
       this.audioPlayer.play(this.audioResource);
-
       await this.updateDashboard(true);
     } catch (err) {
-      logger.error(`[AudioManager] Stream creation error for videoId [${selectedVideoId}]: ${err.message}`);
+      logger.error(`[AudioManager] Stream extraction failed for "${this.currentTrack?.title}": ${err.message}`);
       this.handleTrackEnd();
     }
   }
