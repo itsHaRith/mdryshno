@@ -198,9 +198,33 @@ export class AudioManager {
       }
 
       if (type === 'yt_video') {
-        const info = await play.video_basic_info(query);
-        const video = info.video_details;
-        resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+        try {
+          const yt = await getInnertube();
+          const match = query.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
+          const videoId = match ? match[1] : null;
+
+          if (yt && videoId) {
+            const info = await yt.getBasicInfo(videoId);
+            const details = info.basic_info;
+            resolvedTracks.push(this.formatTrack(
+              details.title || 'YouTube Video',
+              `https://www.youtube.com/watch?v=${videoId}`,
+              (details.duration || 0) * 1000,
+              details.thumbnail?.[0]?.url,
+              details.author || 'YouTube',
+              requesterTag
+            ));
+          } else {
+            const info = await play.video_basic_info(query);
+            const video = info.video_details;
+            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+          }
+        } catch (ytUrlErr) {
+          console.warn(`[AudioManager] Innertube video info resolution failed: ${ytUrlErr.message}. Fallback to play.video_basic_info...`);
+          const info = await play.video_basic_info(query);
+          const video = info.video_details;
+          resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+        }
       } 
       else if (type === 'yt_playlist') {
         const playlist = await play.playlist_info(query, { incomplete: true });
