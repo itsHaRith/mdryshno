@@ -54,12 +54,6 @@ export class BotInstance {
       const content = message.content.trim();
       const lowerContent = content.toLowerCase();
 
-      // Requirement 1: Interactive Onboarding Tutorial "HI!" / "hi" listener
-      if (lowerContent === 'hi' || lowerContent === 'hi!') {
-        const payload = buildTutorialEmbed();
-        return message.channel.send(payload);
-      }
-
       // Fetch dynamic prefix
       const prefix = await getPrefix(this.config.id, this.config.prefix);
 
@@ -81,12 +75,24 @@ export class BotInstance {
           
           const feedbackMsg = await message.reply('🔍 جاري البحث والتشغيل...');
           
+          // Check if there's already a currentTrack playing BEFORE we add the new one
+          const wasPlaying = this.audioManager.currentTrack !== null;
+          
           const result = await this.audioManager.play(query, message.author.tag);
           
           if (result.success) {
-            await feedbackMsg.edit(`✅ تم الإضافة لقائمة التشغيل.`);
-            // Auto delete enqueued notification after 4s to keep chat clean
-            setTimeout(() => feedbackMsg.delete().catch(() => {}), 4000);
+            if (wasPlaying && result.tracks && result.tracks.length > 0) {
+              const addedTrack = result.tracks[0];
+              const { buildEnqueueEmbed } = await import('./uiBuilder.js');
+              const enqueuePayload = buildEnqueueEmbed(addedTrack, this.audioManager.queue.length, this.audioManager.currentTrack);
+              
+              await feedbackMsg.edit(enqueuePayload);
+              // Let the enqueued card stay for 12 seconds
+              setTimeout(() => feedbackMsg.delete().catch(() => {}), 12000);
+            } else {
+              await feedbackMsg.edit(`✅ تم البدء في التشغيل.`);
+              setTimeout(() => feedbackMsg.delete().catch(() => {}), 4000);
+            }
           } else {
             await feedbackMsg.edit(`❌ خطأ: لم يتم العثور على المقطع الصوتي.`);
             setTimeout(() => feedbackMsg.delete().catch(() => {}), 4000);
@@ -94,12 +100,12 @@ export class BotInstance {
         } 
 
         // 1.5. Skip Command
-        else if (command === 'skip' || command === 's' || command === 'س') {
+        else if (command === 'skip' || command === 's' || command === 'س' || command === 'سكب' || command === 'سكيب') {
           if (!this.audioManager || !this.audioManager.currentTrack) {
             return message.reply('❌ لا يوجد شيء يعمل حالياً.');
           }
           this.audioManager.skip();
-          return message.reply('⏭️ تم التخطي.');
+          return message.reply('⏭️ تم السكب.');
         }
 
         // 1.6. Pause / Resume Command
@@ -116,31 +122,21 @@ export class BotInstance {
           }
         }
         
-        // 2. Dynamic Help & Master Control Commands
+        // 2. Dynamic Help & Master Control Commands (Admins Only)
         else if (command === 'help' || command === 'admin-commands') {
           const userIsAdmin = await isAdmin(message.member);
 
-          if (userIsAdmin) {
-            const adminEmbed = buildAdminHelpEmbed(this.config);
-            return message.channel.send(adminEmbed);
-          } else {
-            try {
-              await message.author.send(
-                `👋 **دليل استخدام البوت لـ ${this.client.user.username}**\n\n` +
-                `• اكتب \`${prefix}ش <اسم الأغنية>\` للتشغيل في الروم الصوتي الخاص بك.\n` +
-                `• أزرار التحكم بالصوت والتخطي متوفرة في لوحة التحكم التفاعلية.\n` +
-                `• الأوامر الإدارية متاحة فقط للمشرفين.`
-              );
-              const notify = await message.reply('📬 تم إرسال دليل الاستخدام في الخاص!');
-              setTimeout(() => {
-                notify.delete().catch(() => {});
-                message.delete().catch(() => {});
-              }, 4000);
-            } catch {
-              const warn = await message.reply('❌ تعذر إرسال الدليل. يرجى فتح الرسائل الخاصة للمطالبة بالدليل.');
-              setTimeout(() => warn.delete().catch(() => {}), 6000);
-            }
+          if (!userIsAdmin) {
+            const reply = await message.reply('❌ هذا الأمر مخصص للمشرفين فقط.');
+            setTimeout(() => {
+              reply.delete().catch(() => {});
+              message.delete().catch(() => {});
+            }, 5000);
+            return;
           }
+
+          const adminEmbed = buildAdminHelpEmbed(this.config);
+          return message.channel.send(adminEmbed);
         }
 
         // 3. Admin Dynamic Prefix commands via text
@@ -222,11 +218,11 @@ export class BotInstance {
 
           case 'player_skip':
             this.audioManager.skip();
-            return interaction.reply({ content: '⏭️ تم التخطي.', ephemeral: true });
+            return interaction.reply({ content: '⏭️ تم السكب.', ephemeral: true });
 
           case 'player_stop':
             this.audioManager.stop();
-            return interaction.reply({ content: '⏹️ تم إيقاف التشغيل ومغادرة الروم.', ephemeral: true });
+            return interaction.reply({ content: '⏹️ تم إيقاف التشغيل وتصفير القائمة.', ephemeral: true });
 
           case 'player_shuffle':
             const shuffled = this.audioManager.shuffle();

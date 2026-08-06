@@ -77,7 +77,7 @@ export function buildPlayerDashboard(track, statusInfo) {
     
     new ButtonBuilder()
       .setCustomId('player_skip')
-      .setLabel('تخطي')
+      .setLabel('سكب')
       .setEmoji('⏭️')
       .setStyle(ButtonStyle.Secondary),
 
@@ -222,6 +222,34 @@ export function buildAdminHelpEmbed(botConfig) {
       .setLabel('تزامن قاعدة البيانات')
       .setEmoji('📥')
       .setStyle(ButtonStyle.Success)
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
+/**
+ * Builds the interactive Song Enqueued Embed.
+ */
+export function buildEnqueueEmbed(track, queueLength, currentTrack) {
+  const embed = new EmbedBuilder()
+    .setColor('#FF0055')
+    .setTitle('📥 تم إضافة الأغنية لقائمة الانتظار')
+    .setDescription(`**[${track.title}](${track.url})**\n⏱️ *انتظر تخلص الأغنية الفوق يلا تشتغل هاي.*`)
+    .setThumbnail(track.thumbnail || null)
+    .addFields(
+      { name: '👤 طلب بواسطة', value: `${track.requester}`, inline: true },
+      { name: '⏳ ترتيب الانتظار', value: `#${queueLength}`, inline: true },
+      { name: '🎧 يعمل الآن', value: currentTrack ? `[${currentTrack.title}](${currentTrack.url})` : 'لا يوجد', inline: false }
+    )
+    .setFooter({ text: 'شبكة الموسيقى • انقر سكب لتخطي الأغنية الحالية' })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('player_skip')
+      .setLabel('سكب الأغنية الحالية')
+      .setEmoji('⏭️')
+      .setStyle(ButtonStyle.Danger)
   );
 
   return { embeds: [embed], components: [row] };

@@ -305,6 +305,10 @@ export class AudioManager {
 
     this.currentTrack = this.queue.shift();
 
+    if (this.audioPlayer) {
+      this.audioPlayer.stop(true);
+    }
+
     try {
       let resource;
       try {
@@ -402,10 +406,6 @@ export class AudioManager {
     this.currentTrack = null;
     if (this.audioPlayer) {
       this.audioPlayer.stop(true);
-    }
-    if (this.voiceConnection) {
-      this.voiceConnection.destroy();
-      this.voiceConnection = null;
     }
     this.deleteDashboard();
     return true;
