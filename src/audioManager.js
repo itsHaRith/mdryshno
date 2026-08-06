@@ -8,6 +8,7 @@ import {
   StreamType,
   getVoiceConnection
 } from '@discordjs/voice';
+import { Readable } from 'stream';
 import play from 'play-dl';
 import ytdl from '@distube/ytdl-core';
 import ffmpeg from 'ffmpeg-static';
@@ -386,28 +387,53 @@ export class AudioManager {
     }
 
     try {
-      let resource;
-      try {
-        console.log(`[AudioManager] Streaming YouTube audio via ANDROID client for: ${this.currentTrack.title} (${this.currentTrack.url})`);
-        const stream = ytdl(this.currentTrack.url, {
-          client: 'ANDROID',
-          highWaterMark: 1 << 25
-        });
+      let resource = null;
+      let lastErr = null;
+      const clientRotationList = ['ANDROID', 'IOS', 'WEB_CREATOR', 'TVHTML5_SIMPLY_EMBEDDED', 'WEB'];
 
-        resource = createAudioResource(stream, {
-          inputType: StreamType.Arbitrary,
-          inlineVolume: false
-        });
-      } catch (ytdlErr) {
-        console.warn(`[AudioManager] ANDROID ytdl stream fallback: ${ytdlErr.message}`);
-        const stream = await play.stream(this.currentTrack.url, {
-          discordPlayerCompatibility: true,
-          htmldata: false
-        });
-        resource = createAudioResource(stream.stream, {
-          inputType: stream.type,
-          inlineVolume: false
-        });
+      for (const clientName of clientRotationList) {
+        try {
+          console.log(`[AudioManager] Streaming YouTube audio via client [${clientName}] for: ${this.currentTrack.title}`);
+          const stream = ytdl(this.currentTrack.url, {
+            client: clientName,
+            agent: ytdlCookieAgent || undefined,
+            highWaterMark: 1 << 25
+          });
+
+          resource = createAudioResource(stream, {
+            inputType: StreamType.Arbitrary,
+            inlineVolume: false
+          });
+
+          if (resource) break;
+        } catch (cErr) {
+          lastErr = cErr;
+          console.warn(`[AudioManager] Client [${clientName}] stream failed: ${cErr.message}`);
+        }
+      }
+
+      if (!resource) {
+        try {
+          console.log(`[AudioManager] Client rotation exhausted. Trying Innertube stream fallback for: ${this.currentTrack.title}`);
+          const yt = await getInnertube();
+          const ytMatch = this.currentTrack.url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{11})/);
+          const videoId = ytMatch ? ytMatch[1] : null;
+
+          if (yt && videoId) {
+            const webStream = await yt.download(videoId, { type: 'audio', quality: 'best' });
+            const nodeStream = Readable.fromWeb(webStream);
+            resource = createAudioResource(nodeStream, {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: false
+            });
+          }
+        } catch (inErr) {
+          console.warn(`[AudioManager] Innertube download fallback failed: ${inErr.message}`);
+        }
+      }
+
+      if (!resource) {
+        throw lastErr || new Error('Unable to extract playable YouTube audio stream');
       }
 
       this.audioResource = resource;
