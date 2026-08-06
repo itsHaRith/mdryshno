@@ -1,5 +1,6 @@
+import { fork } from 'child_process';
+import path from 'path';
 import { supabase } from './config/supabaseClient.js';
-import { BotInstance } from './botInstance.js';
 import { 
   initializePrefixCache, 
   initializeAdminRolesCache, 
@@ -12,7 +13,7 @@ import express from 'express';
 // Load environment variables
 dotenv.config();
 
-const botInstances = new Map(); // Store active bot instances in memory: botId -> BotInstance
+const botProcesses = new Map(); // Store child processes: botId -> ChildProcess
 
 // Initialize express web server to satisfy Render's port checks (enables free tier hosting)
 const app = express();
@@ -23,7 +24,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', activeBots: botInstances.size });
+  res.json({ status: 'healthy', activeBots: botProcesses.size });
 });
 
 app.listen(PORT, () => {
@@ -49,39 +50,19 @@ async function bootMasterEngine() {
     process.exit(1);
   }
 
-  if (!bots || bots.length === 0) {
-    console.warn('[Master] WARNING: No bot configurations found in table public.bots!');
-    console.log('[Master] Insert bot tokens and details into public.bots first, then launch the engine.');
-  } else {
-    console.log(`[Master] Found ${bots.length} configured bot(s).`);
-  }
+  console.log(`[Master] Found ${bots ? bots.length : 0} configured bot(s).`);
 
   // 2. Initialize in-memory cache for middleware prefix checking and administration settings
   console.log('[Master] Initializing permission and prefix caching layer...');
   await initializePrefixCache();
   await initializeAdminRolesCache();
 
-  // 3. Spawn bot instances in parallel
+  // 3. Spawn bot instances in separate processes
   if (bots && bots.length > 0) {
-    console.log('[Master] Booting bot instances simultaneously...');
-    const spawnPromises = bots.map(async (botConfig) => {
-      try {
-        const bot = new BotInstance(botConfig);
-        botInstances.set(botConfig.id, bot);
-        
-        // Update status to 'online' in Supabase
-        await supabase
-          .from('bots')
-          .update({ status: 'online' })
-          .eq('id', botConfig.id);
-
-        await bot.start();
-      } catch (err) {
-        console.error(`[Master] Failed to spawn bot ID ${botConfig.id}:`, err.message);
-      }
+    console.log('[Master] Spawning bot instances in separate processes...');
+    bots.forEach((botConfig) => {
+      spawnBotWorker(botConfig.id);
     });
-
-    await Promise.all(spawnPromises);
     console.log('[Master] All active bots launched.');
   }
 
@@ -98,11 +79,12 @@ async function bootMasterEngine() {
         const updatedBot = payload.new;
         console.log(`[Master] [Realtime UPDATE] public.bots updated: ID = ${updatedBot.id}`);
         
-        const instance = botInstances.get(updatedBot.id);
-        if (instance) {
-          // Sync changes dynamically to the in-memory bot configuration
-          await instance.updateConfiguration(updatedBot);
-          updateCachedPrefix(updatedBot.id, updatedBot.prefix);
+        updateCachedPrefix(updatedBot.id, updatedBot.prefix);
+        
+        // Forward the update message to the worker child process if alive
+        const child = botProcesses.get(updatedBot.id);
+        if (child && child.connected) {
+          child.send({ type: 'UPDATE', config: updatedBot });
         }
       }
     )
@@ -127,31 +109,59 @@ async function bootMasterEngine() {
     });
 }
 
+/**
+ * Spawns a bot worker process for the given configuration ID.
+ */
+function spawnBotWorker(botId) {
+  console.log(`[Master] Spawning child process for Bot ID: ${botId}...`);
+  const workerPath = path.resolve('src/botWorker.js');
+  
+  // Fork a separate node process running src/botWorker.js with botId as parameter
+  const child = fork(workerPath, [botId]);
+  
+  botProcesses.set(botId, child);
+  
+  child.on('message', (msg) => {
+    // Handle any message from child processes if needed
+  });
+  
+  child.on('exit', (code, signal) => {
+    console.warn(`[Master] Bot worker ${botId} exited with code ${code} (signal: ${signal}). Auto-restarting in 5 seconds...`);
+    botProcesses.delete(botId);
+    
+    // Auto restart child process if it crashes or exits
+    setTimeout(() => {
+      spawnBotWorker(botId);
+    }, 5000);
+  });
+
+  child.on('error', (err) => {
+    console.error(`[Master] Child process error for Bot ID ${botId}:`, err.message);
+  });
+}
+
 // 5. Handle graceful shutdown
 const shutdown = async () => {
   console.log('\n[Master] Graceful shutdown initiated. Terminating connections...');
   
-  const disconnectPromises = [];
-  for (const [botId, instance] of botInstances.entries()) {
-    console.log(`[Master] Disconnecting bot ID ${botId}...`);
+  const offlinePromises = [];
+  
+  for (const [botId, child] of botProcesses.entries()) {
+    console.log(`[Master] Terminating bot worker ID ${botId}...`);
+    // Remove the exit listener to prevent auto-restart loop on shutdown
+    child.removeAllListeners('exit');
+    child.kill('SIGTERM');
     
-    // Set status to 'offline' in database
-    disconnectPromises.push(
+    offlinePromises.push(
       supabase
         .from('bots')
         .update({ status: 'offline' })
         .eq('id', botId)
-        .then(() => {
-          instance.destroy();
-        })
-        .catch(() => {
-          instance.destroy();
-        })
     );
   }
 
-  await Promise.all(disconnectPromises);
-  console.log('[Master] All connections cleared. Exiting.');
+  await Promise.all(offlinePromises).catch(() => {});
+  console.log('[Master] All child processes terminated. Exiting.');
   process.exit(0);
 };
 
