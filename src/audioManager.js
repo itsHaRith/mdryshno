@@ -10,8 +10,14 @@ import {
 } from '@discordjs/voice';
 import play from 'play-dl';
 import ytdl from '@distube/ytdl-core';
+import ffmpeg from 'ffmpeg-static';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
+
+// Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
+if (ffmpeg) {
+  process.env.FFMPEG_PATH = ffmpeg;
+}
 
 let innertubeInstance = null;
 async function getInnertube() {
@@ -382,12 +388,39 @@ export class AudioManager {
           inlineVolume: true
         });
       } catch (ytdlErr) {
-        console.warn(`[AudioManager] ytdl-core stream failed: ${ytdlErr.message}. Attempting play-dl stream fallback...`);
-        const stream = await play.stream(this.currentTrack.url);
-        resource = createAudioResource(stream.stream, {
-          inputType: stream.type,
-          inlineVolume: true
-        });
+        console.warn(`[AudioManager] ytdl-core stream failed for "${this.currentTrack.title}": ${ytdlErr.message}. Attempting play-dl / SoundCloud fallback...`);
+        try {
+          const stream = await play.stream(this.currentTrack.url);
+          resource = createAudioResource(stream.stream, {
+            inputType: stream.type,
+            inlineVolume: true
+          });
+        } catch (playDlErr) {
+          console.warn(`[AudioManager] play-dl direct stream failed: ${playDlErr.message}. Searching SoundCloud fallback...`);
+          const cleanTitle = this.currentTrack.title
+            .replace(/\([^)]*\)/g, '')
+            .replace(/\[[^\]]*\]/g, '')
+            .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
+            .trim() || this.currentTrack.title;
+
+          const scSearch = await play.search(cleanTitle, { 
+            source: { soundcloud: 'tracks' }, 
+            limit: 1 
+          });
+
+          if (scSearch && scSearch.length > 0) {
+            const track = scSearch[0];
+            const scUrl = track.permalink_url || track.url;
+            console.log(`[AudioManager] Found SoundCloud stream fallback: ${track.title || cleanTitle} (${scUrl})`);
+            const stream = await play.stream(scUrl);
+            resource = createAudioResource(stream.stream, {
+              inputType: stream.type,
+              inlineVolume: true
+            });
+          } else {
+            throw new Error(`Could not create audio stream for "${this.currentTrack.title}"`);
+          }
+        }
       }
 
       this.audioResource = resource;
