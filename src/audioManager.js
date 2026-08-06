@@ -9,6 +9,7 @@ import {
   getVoiceConnection
 } from '@discordjs/voice';
 import play from 'play-dl';
+import ytdl from '@distube/ytdl-core';
 import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
 
@@ -251,7 +252,7 @@ export class AudioManager {
         }
       } 
       else {
-        // Text query: try Innertube search first for ultra-stable English & Arabic YouTube search
+        // Text query: search YouTube ONLY (Innertube first, then play.search fallback)
         try {
           const yt = await getInnertube();
           let ytVideo = null;
@@ -271,37 +272,17 @@ export class AudioManager {
             const author = ytVideo.author?.name || 'YouTube';
             resolvedTracks.push(this.formatTrack(title, videoUrl, durationMs, thumbnail, author, requesterTag));
           } else {
-            // Fallback to play.search if Innertube yielded no video
             const ytSearch = await play.search(query, { limit: 1 });
             if (ytSearch && ytSearch.length > 0) {
               const video = ytSearch[0];
               resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
             } else {
-              throw new Error('No video found on YouTube');
+              throw new Error('No video found on YouTube.');
             }
           }
         } catch (ytSearchErr) {
-          console.warn(`[AudioManager] YouTube search failed for "${query}": ${ytSearchErr.message}. Falling back to SoundCloud...`);
-          const scSearch = await play.search(query, {
-            source: { soundcloud: 'tracks' },
-            limit: 1
-          });
-          if (scSearch && scSearch.length > 0) {
-            const track = scSearch[0];
-            const scTitle = track.title || track.name || query;
-            const scArtist = track.publisher?.name || track.user?.username || 'SoundCloud Artist';
-            const scThumb = track.artwork_url || track.thumbnail || track.user?.avatar_url;
-            resolvedTracks.push(this.formatTrack(
-              scTitle, 
-              track.url, 
-              (track.duration || 0) * 1000, 
-              scThumb, 
-              scArtist, 
-              requesterTag
-            ));
-          } else {
-            throw new Error(`Search failed for "${query}": ${ytSearchErr.message}`);
-          }
+          console.error(`[AudioManager] YouTube search failed for "${query}":`, ytSearchErr.message);
+          throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
         }
       }
     } catch (err) {
@@ -388,54 +369,25 @@ export class AudioManager {
     try {
       let resource;
       try {
-        console.log(`[AudioManager] Attempting play-dl stream for: ${this.currentTrack.title}`);
+        console.log(`[AudioManager] Streaming YouTube audio via ytdl-core for: ${this.currentTrack.title}`);
+        const stream = ytdl(this.currentTrack.url, {
+          filter: 'audioonly',
+          highWaterMark: 1 << 25,
+          quality: 'highestaudio',
+          liveBuffer: 40000
+        });
+
+        resource = createAudioResource(stream, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: true
+        });
+      } catch (ytdlErr) {
+        console.warn(`[AudioManager] ytdl-core stream failed: ${ytdlErr.message}. Attempting play-dl stream fallback...`);
         const stream = await play.stream(this.currentTrack.url);
         resource = createAudioResource(stream.stream, {
           inputType: stream.type,
           inlineVolume: true
         });
-      } catch (streamErr) {
-        console.warn(`[AudioManager] play-dl stream failed: ${streamErr.message}. Attempting cleaned SoundCloud fallback for: ${this.currentTrack.title}`);
-        try {
-          // Clean YouTube noise like (Official Video), [4K], etc. so SoundCloud search succeeds
-          const cleanTitle = this.currentTrack.title
-            .replace(/\([^)]*\)/g, '')
-            .replace(/\[[^\]]*\]/g, '')
-            .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
-            .trim() || this.currentTrack.title;
-
-          console.log(`[AudioManager] Searching SoundCloud with cleaned title: "${cleanTitle}"`);
-          const scSearch = await play.search(cleanTitle, { 
-            source: { soundcloud: 'tracks' }, 
-            limit: 1 
-          });
-          
-          if (scSearch && scSearch.length > 0) {
-            const track = scSearch[0];
-            const scTitle = track.title || track.name || this.currentTrack.title;
-            const scArtist = track.publisher?.name || track.user?.username || 'SoundCloud Artist';
-            const scThumb = track.artwork_url || track.thumbnail || track.user?.avatar_url;
-
-            console.log(`[AudioManager] Found SoundCloud fallback track: ${scTitle} (${track.url})`);
-            const stream = await play.stream(track.url);
-            resource = createAudioResource(stream.stream, {
-              inputType: stream.type,
-              inlineVolume: true
-            });
-            // Update current track details for the dashboard
-            this.currentTrack.title = scTitle;
-            this.currentTrack.url = track.url;
-            this.currentTrack.artist = scArtist;
-            if (scThumb) {
-              this.currentTrack.thumbnail = scThumb;
-            }
-          } else {
-            throw new Error(`No results on SoundCloud for "${cleanTitle}"`);
-          }
-        } catch (scErr) {
-          console.error('[AudioManager] SoundCloud fallback failed:', scErr.message);
-          throw new Error(`Both YouTube and SoundCloud failed. YouTube error: ${streamErr.message}`);
-        }
       }
 
       this.audioResource = resource;
