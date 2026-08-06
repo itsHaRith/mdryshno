@@ -59,17 +59,7 @@ if (process.env.YOUTUBE_COOKIE) {
   });
 }
 
-// Initialize SoundCloud free client ID on module load
-play.getFreeClientID().then((clientId) => {
-  play.setToken({
-    soundcloud: {
-      client_id: clientId
-    }
-  });
-  console.log('[AudioManager] SoundCloud Client ID registered successfully.');
-}).catch((err) => {
-  console.warn('[AudioManager] Failed to initialize SoundCloud Client ID:', err.message);
-});
+
 
 export class AudioManager {
   constructor(client, botConfig) {
@@ -386,43 +376,15 @@ export class AudioManager {
     }
 
     try {
-      let resource;
-      try {
-        console.log(`[AudioManager] Streaming YouTube audio via play-dl for: ${this.currentTrack.title}`);
-        const stream = await play.stream(this.currentTrack.url, {
-          discordPlayerCompatibility: true,
-          htmldata: false
-        });
-        resource = createAudioResource(stream.stream, {
-          inputType: stream.type,
-          inlineVolume: false
-        });
-      } catch (playDlErr) {
-        console.warn(`[AudioManager] Direct YouTube stream blocked for "${this.currentTrack.title}": ${playDlErr.message}. Executing resilient audio stream fallback...`);
-        const cleanTitle = this.currentTrack.title
-          .replace(/\([^)]*\)/g, '')
-          .replace(/\[[^\]]*\]/g, '')
-          .replace(/official music video|official video|music video|lyric video|official audio|audio|4k|hd/gi, '')
-          .trim() || this.currentTrack.title;
-
-        const scSearch = await play.search(cleanTitle, { 
-          source: { soundcloud: 'tracks' }, 
-          limit: 1 
-        });
-
-        if (scSearch && scSearch.length > 0) {
-          const track = scSearch[0];
-          const scUrl = track.permalink_url || track.url;
-          console.log(`[AudioManager] Resilient audio stream obtained for: "${this.currentTrack.title}" (${scUrl})`);
-          const stream = await play.stream(scUrl);
-          resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
-            inlineVolume: false
-          });
-        } else {
-          throw new Error(`Could not create audio stream for "${this.currentTrack.title}"`);
-        }
-      }
+      console.log(`[AudioManager] Streaming YouTube audio for: ${this.currentTrack.title} (${this.currentTrack.url})`);
+      const stream = await play.stream(this.currentTrack.url, {
+        discordPlayerCompatibility: true,
+        htmldata: false
+      });
+      resource = createAudioResource(stream.stream, {
+        inputType: stream.type,
+        inlineVolume: false
+      });
 
       this.audioResource = resource;
       if (this.audioResource.volume) {
