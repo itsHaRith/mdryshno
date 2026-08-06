@@ -12,11 +12,16 @@ import { Readable } from 'stream';
 import play from 'play-dl';
 import ytdl from 'ytdl-core-enhanced';
 import ffmpeg from 'ffmpeg-static';
-import { Innertube } from 'youtubei.js';
+import { Innertube, Log } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
 import { USER_YOUTUBE_COOKIES } from './config/youtubeCookies.js';
 import { fetchYoutubeAuth } from './config/supabaseClient.js';
 import { logger } from './utils/logger.js';
+
+// Suppress Innertube JIT parser debug warnings (OfficialCardView, HorizontalShelfView, etc.)
+try {
+  Log.setLevel(0);
+} catch (e) {}
 
 // Ensure ffmpeg binary path is registered for @discordjs/voice audio probing and transcoding
 if (ffmpeg) {
@@ -430,6 +435,8 @@ export class AudioManager {
         try {
           logger.debug(`[AudioManager] Interrogating YouTube client [${clientName}] for videoId [${selectedVideoId}]: ${this.currentTrack.title}`);
           const info = await ytdl.getInfo(cleanWatchUrl, { 
+            client: clientName,
+            agent: ytdlCookieAgent || undefined,
             requestOptions: {
               headers: {
                 cookie: auth.cookieHeader
