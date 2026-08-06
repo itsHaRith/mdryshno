@@ -73,7 +73,6 @@ export function buildPlayerDashboard(track, statusInfo) {
       { name: '📜 قادم في القائمة', value: `\`${queueLength} أغنية\``, inline: true },
       { name: '🌐 المصدر', value: `\`YouTube / Spotify HD\``, inline: true }
     )
-    .setImage(track.thumbnail || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop')
     .setFooter({ 
       text: '🎧 تحكم كامل عبر الأزرار التفاعلية بالأسفل • شبكة الموسيقى الاحترافية',
       iconURL: 'https://cdn-icons-png.flaticon.com/512/461/461238.png'
@@ -244,7 +243,6 @@ export function buildEnqueueEmbed(track, queueLength, currentTrack) {
     .setAuthor({ name: '📥 تم إضافة مقطع لقائمة الانتظار', iconURL: 'https://cdn-icons-png.flaticon.com/512/833/833446.png' })
     .setTitle(`✨ ${track.title}`)
     .setURL(track.url || null)
-    .setImage(track.thumbnail || null)
     .addFields(
       { name: '👤 طلب بواسطة', value: `${track.requester}`, inline: true },
       { name: '⏳ ترتيب الانتظار', value: `#${queueLength}`, inline: true },

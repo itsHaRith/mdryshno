@@ -201,11 +201,29 @@ export class AudioManager {
 
       if (directVideoId) {
         try {
-          const yt = await getInnertube();
-          if (yt) {
+          const videoUrl = `https://www.youtube.com/watch?v=${directVideoId}`;
+          const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`);
+          if (oembedRes.ok) {
+            const data = await oembedRes.json();
+            console.log(`[AudioManager] oEmbed resolved title for ${directVideoId}: "${data.title}"`);
+            resolvedTracks.push(this.formatTrack(
+              data.title || 'YouTube Video',
+              videoUrl,
+              0,
+              data.thumbnail_url || null,
+              data.author_name || 'YouTube',
+              requesterTag
+            ));
+          } else {
+            throw new Error(`oEmbed status ${oembedRes.status}`);
+          }
+        } catch (ytUrlErr) {
+          console.warn(`[AudioManager] oEmbed video info resolution failed for ${directVideoId}: ${ytUrlErr.message}. Fallback to Innertube...`);
+          try {
+            const yt = await getInnertube();
             const info = await yt.getBasicInfo(directVideoId);
             const details = info.basic_info;
-            const realTitle = typeof details.title === 'string' ? details.title : (details.title?.text || 'YouTube Video');
+            const realTitle = typeof details.title === 'string' ? details.title : (details.title?.text || `YouTube Video (${directVideoId})`);
             resolvedTracks.push(this.formatTrack(
               realTitle,
               `https://www.youtube.com/watch?v=${directVideoId}`,
@@ -214,17 +232,6 @@ export class AudioManager {
               details.author || 'YouTube',
               requesterTag
             ));
-          } else {
-            const info = await play.video_basic_info(query);
-            const video = info.video_details;
-            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
-          }
-        } catch (ytUrlErr) {
-          console.warn(`[AudioManager] Innertube video info resolution failed: ${ytUrlErr.message}. Fallback to play.video_basic_info...`);
-          try {
-            const info = await play.video_basic_info(query);
-            const video = info.video_details;
-            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
           } catch (e2) {
             resolvedTracks.push(this.formatTrack(`YouTube Video (${directVideoId})`, `https://www.youtube.com/watch?v=${directVideoId}`, 0, null, 'YouTube', requesterTag));
           }
