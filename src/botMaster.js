@@ -43,8 +43,16 @@ app.get('/test-play-all', (req, res) => {
   res.json({ success: true, triggeredCount: count });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[Web Server] Ping listener active on port ${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`[Web Server] Port ${PORT} is already in use by another process. Proceeding with bot engine execution...`);
+  } else {
+    console.error(`[Web Server] Server error:`, err.message);
+  }
 });
 
 /**
