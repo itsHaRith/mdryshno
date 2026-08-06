@@ -35,7 +35,6 @@ export function formatDuration(ms) {
 
 /**
  * Builds the interactive Player Dashboard.
- * Displays title, artist, progress bar, thumbnail, requester tag, and control buttons.
  */
 export function buildPlayerDashboard(track, statusInfo) {
   const { 
@@ -50,51 +49,53 @@ export function buildPlayerDashboard(track, statusInfo) {
   const progressText = createProgressBar(currentTime, totalMs);
   const durationText = `${formatDuration(currentTime)} / ${formatDuration(totalMs)}`;
 
+  const loopAr = loopMode === 'none' ? 'معطل' : loopMode === 'track' ? 'أغنية' : 'قائمة';
+
   const embed = new EmbedBuilder()
-    .setColor(isPlaying ? 0x00FF87 : 0xFFB300) // Vibrant teal green or amber warning
-    .setTitle(`🎶 Now Playing: ${track.title}`)
+    .setColor(isPlaying ? 0x00FF87 : 0xFFB300)
+    .setTitle(`🎶 المشغل الحالي: ${track.title}`)
     .setURL(track.url || null)
     .setThumbnail(track.thumbnail || null)
     .addFields(
-      { name: '👤 Artist', value: track.artist || 'Unknown Artist', inline: true },
-      { name: '📥 Requested By', value: track.requester || 'System', inline: true },
-      { name: '🔊 Volume', value: `${volume}%`, inline: true },
-      { name: '🔄 Loop Mode', value: loopMode.toUpperCase(), inline: true },
-      { name: '📜 Remaining in Queue', value: `${queueLength} song(s)`, inline: true },
-      { name: '⏱️ Progress', value: `${progressText}\n*${durationText}*`, inline: false }
+      { name: '👤 الفنان', value: track.artist || 'غير معروف', inline: true },
+      { name: '📥 بواسطة', value: track.requester || 'النظام', inline: true },
+      { name: '🔊 الصوت', value: `${volume}%`, inline: true },
+      { name: '🔄 التكرار', value: loopAr, inline: true },
+      { name: '📜 القائمة', value: `${queueLength} أغنية`, inline: true },
+      { name: '⏱️ الوقت', value: `${progressText}\n*${durationText}*`, inline: false }
     )
-    .setFooter({ text: 'Discord Music Network • Clean Dynamic Controls' })
+    .setFooter({ text: 'شبكة الموسيقى • أزرار تحكم تفاعلية' })
     .setTimestamp();
 
   // Action Row 1: Playback State Controls
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('player_play_pause')
-      .setLabel(isPlaying ? 'Pause' : 'Resume')
+      .setLabel(isPlaying ? 'إيقاف مؤقت' : 'تشغيل')
       .setEmoji(isPlaying ? '⏸️' : '▶️')
       .setStyle(isPlaying ? ButtonStyle.Primary : ButtonStyle.Success),
     
     new ButtonBuilder()
       .setCustomId('player_skip')
-      .setLabel('Skip')
+      .setLabel('تخطي')
       .setEmoji('⏭️')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_stop')
-      .setLabel('Stop')
+      .setLabel('إيقاف')
       .setEmoji('⏹️')
       .setStyle(ButtonStyle.Danger),
 
     new ButtonBuilder()
       .setCustomId('player_shuffle')
-      .setLabel('Shuffle')
+      .setLabel('عشوائي')
       .setEmoji('🔀')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_loop')
-      .setLabel(`Loop: ${loopMode}`)
+      .setLabel(`تكرار: ${loopAr}`)
       .setEmoji('🔁')
       .setStyle(loopMode === 'none' ? ButtonStyle.Secondary : ButtonStyle.Success)
   );
@@ -103,25 +104,25 @@ export function buildPlayerDashboard(track, statusInfo) {
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('player_vol_down')
-      .setLabel('Vol -10%')
+      .setLabel('خفض الصوت')
       .setEmoji('🔉')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_vol_up')
-      .setLabel('Vol +10%')
+      .setLabel('رفع الصوت')
       .setEmoji('🔊')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_queue')
-      .setLabel('View Queue')
+      .setLabel('القائمة')
       .setEmoji('📜')
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
       .setCustomId('player_dismiss')
-      .setLabel('Dismiss UI')
+      .setLabel('إخفاء')
       .setEmoji('❌')
       .setStyle(ButtonStyle.Secondary)
   );
@@ -134,51 +135,48 @@ export function buildPlayerDashboard(track, statusInfo) {
  */
 export function buildTutorialEmbed() {
   const embed = new EmbedBuilder()
-    .setColor(0x7289DA) // Discord Blurple
-    .setTitle('👋 Welcome to the Discord Music Network!')
-    .setDescription(
-      'This server runs high-performance dedicated bots connected directly to your voice channels. ' +
-      'Here is a quick guide to getting started.'
-    )
+    .setColor(0x7289DA)
+    .setTitle('👋 أهلاً بك في شبكة الموسيقى!')
+    .setDescription('دليل استخدام سريع لبوتات الموسيقى:')
     .addFields(
       { 
-        name: '🎵 How to Play Music', 
-        value: '1. Join your designated Voice Channel.\n' +
-               '2. Use the bot prefix (default `!play`) followed by a query or link.\n' +
-               '   *Examples:*\n' +
-               '   `!play lo-fi beats`\n' +
-               '   `!play <Spotify Song/Playlist Link>`\n' +
-               '   `!play <YouTube URL>`', 
+        name: '🎵 طريقة التشغيل', 
+        value: '1. انضم للروم الصوتي الخاص بالبوت.\n' +
+               '2. اكتب الأمر متبوعاً باسم الأغنية أو الرابط.\n' +
+               '   *أمثلة:*\n' +
+               '   `!ش حسين غزال`\n' +
+               '   `!ش <رابط سبوتيفاي>`\n' +
+               '   `!ش <رابط يوتيوب>`', 
         inline: false 
       },
       { 
-        name: '🎛️ Dynamic Playback Controls', 
-        value: 'When a track is playing, a live Dashboard is posted in this channel. You can control the volume, skip tracks, loop, and view queues using the interactive buttons.', 
+        name: '🎛️ أزرار التحكم باللوحة', 
+        value: 'عند التشغيل، ستظهر لوحة تحكم تفاعلية تمكنك من تغيير مستوى الصوت، التخطي، التكرار، وعرض القائمة بضغطة زر.', 
         inline: false 
       },
       { 
-        name: '⚙️ Administrative Setup', 
-        value: 'Server Administrators can configure prefixes, assign voice channels, and reboot active bot nodes via the hidden control panel (`!help`).', 
+        name: '⚙️ خيارات الإدارة', 
+        value: 'يمكن للمشرفين إعداد الاختصارات وتعديل الغرف البرمجية عبر الأمر `!help`.', 
         inline: false 
       }
     )
-    .setFooter({ text: 'Interactive Onboarding Tutorial' })
+    .setFooter({ text: 'دليل الاستخدام التفاعلي' })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('tutorial_how_to_play')
-      .setLabel('🎵 How to Play')
+      .setLabel('طريقة التشغيل')
       .setStyle(ButtonStyle.Primary),
     
     new ButtonBuilder()
       .setCustomId('tutorial_buttons_guide')
-      .setLabel('🎛️ Control Buttons Guide')
+      .setLabel('دليل الأزرار')
       .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
       .setCustomId('tutorial_queue_help')
-      .setLabel('❓ Show Queue Help')
+      .setLabel('مساعدة')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -189,43 +187,43 @@ export function buildTutorialEmbed() {
  * Builds the Administrator-Only Help and configuration embed.
  */
 export function buildAdminHelpEmbed(botConfig) {
+  const statusAr = botConfig.status === 'online' ? 'نشط' : botConfig.status === 'busy' ? 'مشغول' : 'غير متصل';
+
   const embed = new EmbedBuilder()
-    .setColor(0xED4245) // Danger Red / Security Red
-    .setTitle('⚙️ Admin Master Control Panel')
-    .setDescription(
-      'You are viewing this panel because you have administrator permissions. ' +
-      'Manage this bot instance and coordinate updates live.'
-    )
+    .setColor(0xED4245)
+    .setTitle('⚙️ لوحة تحكم الإدارة')
+    .setDescription('إدارة وتعديل هذا البوت في الوقت الفعلي:')
     .addFields(
-      { name: '🤖 Bot Instance ID', value: `\`${botConfig.id}\``, inline: true },
-      { name: '🏷️ Bot Name', value: `${botConfig.bot_name}`, inline: true },
-      { name: '⚡ Active Prefix', value: `\`${botConfig.prefix}\``, inline: true },
-      { name: '📊 Engine Status', value: `\`${botConfig.status.toUpperCase()}\``, inline: true },
-      { name: '🔊 Bound Voice Channel', value: `<#${botConfig.voice_channel_id}>`, inline: true },
-      { name: '💬 Bound Text Channel', value: `<#${botConfig.text_channel_id}>`, inline: true }
+      { name: '🤖 معرف البوت', value: `\`${botConfig.id}\``, inline: true },
+      { name: '🏷️ الاسم', value: `${botConfig.bot_name}`, inline: true },
+      { name: '⚡ الاختصار', value: `\`${botConfig.prefix}\``, inline: true },
+      { name: '📊 حالة المحرك', value: `\`${statusAr}\``, inline: true },
+      { name: '🔊 الروم الصوتي', value: `<#${botConfig.voice_channel_id}>`, inline: true },
+      { name: '💬 الروم الكتابي', value: `<#${botConfig.text_channel_id}>`, inline: true }
     )
-    .setFooter({ text: 'Admin Controls • Realtime Supabase Hook' })
+    .setFooter({ text: 'لوحة التحكم الإدارية • تزامن Supabase' })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('admin_btn_change_prefix')
-      .setLabel('Edit Prefix')
+      .setLabel('تغيير الاختصار')
       .setEmoji('✏️')
       .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
       .setCustomId('admin_btn_reboot')
-      .setLabel('Reboot Instance')
+      .setLabel('إعادة التشغيل')
       .setEmoji('🔄')
       .setStyle(ButtonStyle.Danger),
 
     new ButtonBuilder()
       .setCustomId('admin_btn_sync')
-      .setLabel('Sync Supabase')
+      .setLabel('تزامن قاعدة البيانات')
       .setEmoji('📥')
       .setStyle(ButtonStyle.Success)
   );
 
   return { embeds: [embed], components: [row] };
 }
+
