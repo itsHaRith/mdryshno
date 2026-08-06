@@ -276,33 +276,13 @@ export class AudioManager {
           }
         } 
         else {
-          // Text search query: execute play.search first to guarantee valid video.id and video.url
+          // Text search query: execute Innertube search first for reliable renderer parsing, with protected play.search fallback
           try {
             logger.debug(`[AudioManager] Searching YouTube for text query: "${query}"`);
-            const ytSearch = await play.search(query, { limit: 1 });
-            
-            if (ytSearch && ytSearch.length > 0 && (ytSearch[0].id || ytSearch[0].url)) {
-              const video = ytSearch[0];
-              const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
-              
-              if (!videoId) {
-                throw new Error(`Extracted search result had invalid video ID: ${JSON.stringify(video)}`);
-              }
+            let searchResolved = false;
 
-              const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-              logger.info(`[AudioManager] Search resolved valid YouTube track: "${video.title}" (${videoUrl})`);
-              
-              resolvedTracks.push(this.formatTrack(
-                video.title || query,
-                videoUrl,
-                (video.durationInSec || 0) * 1000,
-                video.thumbnails?.[0]?.url || null,
-                video.channel?.name || 'YouTube',
-                requesterTag
-              ));
-            } else {
-              // Fallback to Innertube search with safe video filtering
-              logger.warn(`[AudioManager] play.search returned empty for "${query}". Falling back to Innertube search...`);
+            // Tier 1: Innertube search with safe video filtering
+            try {
               const yt = await getInnertube();
               if (yt) {
                 const searchRes = await yt.search(query);
@@ -318,7 +298,7 @@ export class AudioManager {
                     const realTitle = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
                     const authorName = ytVideo.author?.name || ytVideo.author?.text || 'YouTube';
                     
-                    logger.info(`[AudioManager] Innertube search resolved valid YouTube track: "${realTitle}" (${videoUrl})`);
+                    logger.info(`[AudioManager] Search resolved valid YouTube track: "${realTitle}" (${videoUrl})`);
 
                     resolvedTracks.push(this.formatTrack(
                       realTitle,
@@ -328,17 +308,50 @@ export class AudioManager {
                       authorName,
                       requesterTag
                     ));
+                    searchResolved = true;
                   }
                 }
+              }
+            } catch (innertubeErr) {
+              logger.warn(`[AudioManager] Innertube search error for "${query}": ${innertubeErr.message}`);
+            }
+
+            // Tier 2: Protected play.search fallback (catches browseId errors from play-dl)
+            if (!searchResolved) {
+              try {
+                logger.debug(`[AudioManager] Innertube yielded no results for "${query}". Trying play.search fallback...`);
+                const ytSearch = await play.search(query, { limit: 1 });
+                
+                if (ytSearch && ytSearch.length > 0 && (ytSearch[0].id || ytSearch[0].url)) {
+                  const video = ytSearch[0];
+                  const videoId = video.id || (video.url ? video.url.match(/v=([\w-]{11})/)?.[1] : null);
+                  
+                  if (videoId) {
+                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                    logger.info(`[AudioManager] play.search fallback resolved track: "${video.title}" (${videoUrl})`);
+                    
+                    resolvedTracks.push(this.formatTrack(
+                      video.title || query,
+                      videoUrl,
+                      (video.durationInSec || 0) * 1000,
+                      video.thumbnails?.[0]?.url || null,
+                      video.channel?.name || 'YouTube',
+                      requesterTag
+                    ));
+                    searchResolved = true;
+                  }
+                }
+              } catch (playSearchErr) {
+                logger.warn(`[AudioManager] play.search fallback error for "${query}": ${playSearchErr.message}`);
               }
             }
 
             if (resolvedTracks.length === 0) {
-              throw new Error(`No valid YouTube video URL could be resolved for query: "${query}"`);
+              throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
             }
           } catch (ytSearchErr) {
-            logger.warn(`[AudioManager] YouTube search failed for "${query}": ${ytSearchErr.message}`);
-            throw new Error(`لم يتم العثور على نتائج في يوتيوب لـ: "${query}"`);
+            logger.warn(`[AudioManager] YouTube search resolution failed for "${query}": ${ytSearchErr.message}`);
+            return { success: false, error: ytSearchErr.message };
           }
         }
       }

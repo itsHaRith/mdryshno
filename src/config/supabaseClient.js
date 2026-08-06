@@ -4,6 +4,7 @@ process.env.SUPABASE_JS_DISABLE_WARNINGS = 'true';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import WebSocket from 'ws';
+import { logger } from '../utils/logger.js';
 
 // Load environment variables
 dotenv.config();
@@ -12,7 +13,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
-  console.error('[Supabase] CRITICAL ERROR: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment variables!');
+  logger.error('[Supabase] CRITICAL ERROR: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment variables!');
 }
 
 // Polyfill WebSocket for Node versions without native WebSocket (Node < 22)
@@ -61,12 +62,12 @@ export async function fetchYoutubeAuth() {
       .maybeSingle();
 
     if (error) {
-      console.warn('[Supabase] youtube_auth table query warning:', error.message);
+      logger.debug('[Supabase] youtube_auth table query warning:', error.message);
       return null;
     }
 
     if (data && isInvalidPlaceholder(data.cookie_header)) {
-      console.warn('[Supabase] Detected invalid/placeholder YouTube cookie in youtube_auth table. Falling back to persistent session credentials.');
+      logger.debug('[Supabase] Detected invalid/placeholder YouTube cookie in youtube_auth table. Falling back to persistent session credentials.');
       return {
         cookie_header: null,
         po_token: isInvalidPlaceholder(data.po_token) ? null : data.po_token,
@@ -76,9 +77,9 @@ export async function fetchYoutubeAuth() {
 
     return data;
   } catch (err) {
-    console.warn('[Supabase] Failed to fetch youtube_auth session data:', err.message);
+    logger.debug('[Supabase] Failed to fetch youtube_auth session data:', err.message);
     return null;
   }
 }
 
-console.log('[Supabase] Client initialized successfully.');
+logger.info('[Supabase] Client initialized successfully.');

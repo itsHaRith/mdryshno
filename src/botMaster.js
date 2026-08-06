@@ -13,6 +13,7 @@ import {
 } from './adminMiddleware.js';
 import dotenv from 'dotenv';
 import express from 'express';
+import { logger } from './utils/logger.js';
 
 // Load environment variables
 dotenv.config();
@@ -32,7 +33,7 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/test-play-all', (req, res) => {
-  console.log(`[Master] IPC Trigger: Broadcasting TEST_PLAY to all ${botProcesses.size} workers.`);
+  logger.info(`[Master] IPC Trigger: Broadcasting TEST_PLAY to all ${botProcesses.size} workers.`);
   let count = 0;
   for (const [botId, child] of botProcesses.entries()) {
     if (child && child.connected) {
@@ -44,14 +45,14 @@ app.get('/test-play-all', (req, res) => {
 });
 
 const server = app.listen(PORT, () => {
-  console.log(`[Web Server] Ping listener active on port ${PORT}`);
+  logger.info(`[Web Server] Ping listener active on port ${PORT}`);
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.warn(`[Web Server] Port ${PORT} is already in use by another process. Proceeding with bot engine execution...`);
+    logger.warn(`[Web Server] Port ${PORT} is already in use by another process. Proceeding with bot engine execution...`);
   } else {
-    console.error(`[Web Server] Server error:`, err.message);
+    logger.error(`[Web Server] Server error:`, err.message);
   }
 });
 
@@ -59,35 +60,35 @@ server.on('error', (err) => {
  * Initializes and boots the Discord Multi-Bot Engine.
  */
 async function bootMasterEngine() {
-  console.log('============================================');
-  console.log('🚀 INITIALIZING MULTI-BOT MUSIC NETWORK ENGINE');
-  console.log('============================================');
+  logger.info('============================================');
+  logger.info('🚀 INITIALIZING MULTI-BOT MUSIC NETWORK ENGINE');
+  logger.info('============================================');
 
   // 1. Fetch bots config from database
-  console.log('[Master] Fetching bot configurations from Supabase...');
+  logger.info('[Master] Fetching bot configurations from Supabase...');
   const { data: bots, error } = await supabase
     .from('bots')
     .select('*');
 
   if (error) {
-    console.error('[Master] CRITICAL: Failed to load bots from Supabase:', error.message);
+    logger.error('[Master] CRITICAL: Failed to load bots from Supabase:', error.message);
     process.exit(1);
   }
 
-  console.log(`[Master] Found ${bots ? bots.length : 0} configured bot(s).`);
+  logger.info(`[Master] Found ${bots ? bots.length : 0} configured bot(s).`);
 
   // 2. Initialize in-memory cache for middleware prefix checking and administration settings
-  console.log('[Master] Initializing permission and prefix caching layer...');
+  logger.info('[Master] Initializing permission and prefix caching layer...');
   await initializePrefixCache();
   await initializeAdminRolesCache();
 
   // 3. Spawn bot instances in separate processes
   if (bots && bots.length > 0) {
-    console.log('[Master] Spawning bot instances in separate processes...');
+    logger.info('[Master] Spawning bot instances in separate processes...');
     bots.forEach((botConfig) => {
       spawnBotWorker(botConfig.id);
     });
-    console.log('[Master] All active bots launched.');
+    logger.info('[Master] All active bots launched.');
   }
 
   // 4. Setup Supabase Realtime subscriptions for dynamic, zero-downtime updates

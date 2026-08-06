@@ -1,5 +1,6 @@
 import { PermissionsBitField } from 'discord.js';
 import { supabase } from './config/supabaseClient.js';
+import { logger } from './utils/logger.js';
 
 // Memory cache for fast lookups (avoiding database querying on every single incoming message)
 const prefixCache = new Map(); // Key: botId -> prefix
@@ -20,10 +21,10 @@ export async function initializePrefixCache() {
       for (const bot of data) {
         prefixCache.set(bot.id, bot.prefix);
       }
-      console.log(`[AdminMiddleware] Cached ${prefixCache.size} prefixes.`);
+      logger.info(`[AdminMiddleware] Cached ${prefixCache.size} bot prefixes.`);
     }
   } catch (err) {
-    console.error('[AdminMiddleware] Error seeding prefix cache:', err);
+    logger.error('[AdminMiddleware] Error seeding prefix cache:', err.message);
   }
 }
 
@@ -42,10 +43,10 @@ export async function initializeAdminRolesCache() {
       for (const setting of data) {
         adminRolesCache.set(setting.guild_id, new Set(setting.admin_role_ids || []));
       }
-      console.log(`[AdminMiddleware] Cached admin settings for ${adminRolesCache.size} guilds.`);
+      logger.info(`[AdminMiddleware] Cached admin settings for ${adminRolesCache.size} guilds.`);
     }
   } catch (err) {
-    console.error('[AdminMiddleware] Error seeding admin roles cache:', err);
+    logger.error('[AdminMiddleware] Error seeding admin roles cache:', err.message);
   }
 }
 
@@ -54,7 +55,7 @@ export async function initializeAdminRolesCache() {
  */
 export function updateCachedPrefix(botId, newPrefix) {
   prefixCache.set(botId, newPrefix);
-  console.log(`[AdminMiddleware] Cache updated: Bot ${botId} prefix is now "${newPrefix}"`);
+  logger.info(`[AdminMiddleware] Cache updated: Bot ${botId} prefix is now "${newPrefix}"`);
 }
 
 /**
@@ -175,7 +176,7 @@ export async function setAdminRoles(guildId, roleIds) {
     adminRolesCache.set(guildId, new Set(roleIds));
     return { success: true };
   } catch (err) {
-    console.error(`[AdminMiddleware] Failed to set admin roles for guild ${guildId}:`, err);
+    logger.error(`[AdminMiddleware] Failed to set admin roles for guild ${guildId}: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
