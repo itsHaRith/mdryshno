@@ -9,7 +9,20 @@ import {
   getVoiceConnection
 } from '@discordjs/voice';
 import play from 'play-dl';
+import { Innertube } from 'youtubei.js';
 import { buildPlayerDashboard } from './uiBuilder.js';
+
+let innertubeInstance = null;
+async function getInnertube() {
+  if (!innertubeInstance) {
+    try {
+      innertubeInstance = await Innertube.create();
+    } catch (e) {
+      console.warn('[AudioManager] Failed to initialize Innertube YouTube client:', e.message);
+    }
+  }
+  return innertubeInstance;
+}
 
 // Initialize Spotify client if credentials exist in environment variables
 if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
@@ -214,34 +227,56 @@ export class AudioManager {
         }
       } 
       else {
-        // Assume text query, try YouTube search first
+        // Text query: try Innertube search first for ultra-stable English & Arabic YouTube search
         try {
-          const ytSearch = await play.search(query, { limit: 1 });
-          if (ytSearch && ytSearch.length > 0) {
-            const video = ytSearch[0];
-            resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+          const yt = await getInnertube();
+          let ytVideo = null;
+
+          if (yt) {
+            const searchRes = await yt.search(query);
+            if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
+              ytVideo = searchRes.videos[0];
+            }
+          }
+
+          if (ytVideo) {
+            const title = typeof ytVideo.title === 'string' ? ytVideo.title : (ytVideo.title?.text || query);
+            const videoUrl = `https://www.youtube.com/watch?v=${ytVideo.id}`;
+            const durationMs = (ytVideo.duration?.seconds || 0) * 1000;
+            const thumbnail = ytVideo.thumbnails?.[0]?.url;
+            const author = ytVideo.author?.name || 'YouTube';
+            resolvedTracks.push(this.formatTrack(title, videoUrl, durationMs, thumbnail, author, requesterTag));
           } else {
-            throw new Error('No results on YouTube');
+            // Fallback to play.search if Innertube yielded no video
+            const ytSearch = await play.search(query, { limit: 1 });
+            if (ytSearch && ytSearch.length > 0) {
+              const video = ytSearch[0];
+              resolvedTracks.push(this.formatTrack(video.title, video.url, video.durationInSec * 1000, video.thumbnails[0]?.url, video.channel?.name, requesterTag));
+            } else {
+              throw new Error('No video found on YouTube');
+            }
           }
         } catch (ytSearchErr) {
-          console.warn(`[AudioManager] YouTube search failed: ${ytSearchErr.message}. Trying SoundCloud search...`);
-          // Fallback to SoundCloud search directly
+          console.warn(`[AudioManager] YouTube search failed for "${query}": ${ytSearchErr.message}. Falling back to SoundCloud...`);
           const scSearch = await play.search(query, {
             source: { soundcloud: 'tracks' },
             limit: 1
           });
           if (scSearch && scSearch.length > 0) {
             const track = scSearch[0];
+            const scTitle = track.title || track.name || query;
+            const scArtist = track.publisher?.name || track.user?.username || 'SoundCloud Artist';
+            const scThumb = track.artwork_url || track.thumbnail || track.user?.avatar_url;
             resolvedTracks.push(this.formatTrack(
-              track.title || 'SoundCloud Audio', 
+              scTitle, 
               track.url, 
               (track.duration || 0) * 1000, 
-              track.artwork_url, 
-              track.publisher?.name || 'SoundCloud Artist', 
+              scThumb, 
+              scArtist, 
               requesterTag
             ));
           } else {
-            throw new Error(`Both YouTube and SoundCloud search failed. YouTube error: ${ytSearchErr.message}`);
+            throw new Error(`Search failed for "${query}": ${ytSearchErr.message}`);
           }
         }
       }
@@ -271,6 +306,23 @@ export class AudioManager {
   async searchAndResolveSpotify(spTrack, requesterTag) {
     const searchString = `${spTrack.name} ${spTrack.artists?.[0]?.name || ''}`;
     try {
+      const yt = await getInnertube();
+      if (yt) {
+        const searchRes = await yt.search(searchString);
+        if (searchRes && searchRes.videos && searchRes.videos.length > 0) {
+          const video = searchRes.videos[0];
+          const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+          return this.formatTrack(
+            spTrack.name, 
+            videoUrl, 
+            spTrack.durationInMs || ((video.duration?.seconds || 0) * 1000), 
+            spTrack.thumbnail?.url || video.thumbnails?.[0]?.url, 
+            spTrack.artists?.map(a => a.name).join(', ') || video.author?.name, 
+            requesterTag
+          );
+        }
+      }
+
       const ytSearch = await play.search(searchString, { limit: 1 });
       if (ytSearch && ytSearch.length > 0) {
         const video = ytSearch[0];
@@ -328,18 +380,22 @@ export class AudioManager {
           
           if (scSearch && scSearch.length > 0) {
             const track = scSearch[0];
-            console.log(`[AudioManager] Found SoundCloud fallback track: ${track.title || 'SoundCloud Audio'} (${track.url})`);
+            const scTitle = track.title || track.name || this.currentTrack.title;
+            const scArtist = track.publisher?.name || track.user?.username || 'SoundCloud Artist';
+            const scThumb = track.artwork_url || track.thumbnail || track.user?.avatar_url;
+
+            console.log(`[AudioManager] Found SoundCloud fallback track: ${scTitle} (${track.url})`);
             const stream = await play.stream(track.url);
             resource = createAudioResource(stream.stream, {
               inputType: stream.type,
               inlineVolume: true
             });
             // Update current track details for the dashboard
-            this.currentTrack.title = track.title || this.currentTrack.title;
+            this.currentTrack.title = scTitle;
             this.currentTrack.url = track.url;
-            this.currentTrack.artist = track.publisher?.name || 'SoundCloud Artist';
-            if (track.artwork_url) {
-              this.currentTrack.thumbnail = track.artwork_url;
+            this.currentTrack.artist = scArtist;
+            if (scThumb) {
+              this.currentTrack.thumbnail = scThumb;
             }
           } else {
             throw new Error('No results on SoundCloud');

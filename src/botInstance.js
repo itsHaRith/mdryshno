@@ -3,6 +3,8 @@ import { AudioManager } from './audioManager.js';
 import { getPrefix, setPrefix, isAdmin } from './adminMiddleware.js';
 import { buildTutorialEmbed, buildAdminHelpEmbed } from './uiBuilder.js';
 
+const processedMessages = new Set();
+
 export class BotInstance {
   constructor(botConfig) {
     this.config = botConfig;
@@ -36,6 +38,14 @@ export class BotInstance {
 
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot || !message.guild) return;
+
+      // Deduplication guard: ignore same message if processed already
+      if (processedMessages.has(message.id)) return;
+      processedMessages.add(message.id);
+      if (processedMessages.size > 500) {
+        const first = processedMessages.values().next().value;
+        processedMessages.delete(first);
+      }
 
       // Ensure message is in the bot's designated server (guild)
       if (message.guild.id !== this.config.guild_id) return;
