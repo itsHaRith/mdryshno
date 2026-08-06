@@ -421,7 +421,7 @@ export class AudioManager {
     try {
       let resource = null;
       let lastErr = null;
-      const clientRotationList = ['TVHTML5_SIMPLY_EMBEDDED', 'IOS', 'WEB_CREATOR', 'ANDROID', 'WEB'];
+      const clientRotationList = ['ANDROID', 'IOS', 'WEB_CREATOR', 'MWEB', 'WEB'];
 
       // Fetch dynamic validated Supabase session authentication (cookieHeader, poToken, visitorData)
       const auth = await getValidYouTubeAuth();
@@ -503,7 +503,7 @@ export class AudioManager {
 
       await this.updateDashboard(true);
     } catch (err) {
-      console.error('[AudioManager] Stream creation error:', err.message);
+      logger.error(`[AudioManager] Stream creation error for videoId [${selectedVideoId}]: ${err.message}`);
       this.handleTrackEnd();
     }
   }
