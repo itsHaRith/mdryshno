@@ -1,0 +1,10 @@
+run = "npm install && npm start"
+language = "nodejs"
+entrypoint = "src/botMaster.js"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "npm install && npm start"]
+deploymentTarget = "cloudrun"
