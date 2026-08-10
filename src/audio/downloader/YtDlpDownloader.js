@@ -113,8 +113,8 @@ export class YtDlpDownloader {
     const args = [
       '--no-playlist',
       '--no-warnings',
-      // Best audio — no conversion needed, avoids "format not available" error
-      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+      '--js-runtimes', 'node',
+      '-f', 'ba/b',
       '--no-post-overwrites',
       ...ffmpegArgs,
       '-o', outputTemplate,
