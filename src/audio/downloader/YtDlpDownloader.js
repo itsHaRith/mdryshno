@@ -25,13 +25,23 @@
  *   Each bot downloads its own file — no filename conflicts (uses videoId).
  */
 
-import { spawn }        from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { spawn, execSync } from 'child_process';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import ffmpegPath        from 'ffmpeg-static';
+import ffmpegStatic      from 'ffmpeg-static';
 import { cookieManager } from '../cookies/CookieManager.js';
 import { logger }        from '../../utils/logger.js';
+
+// Prefer system ffmpeg (installed via replit.nix or apt) — fall back to ffmpeg-static
+function resolveFfmpeg() {
+  try {
+    const sys = execSync('which ffmpeg 2>/dev/null || where ffmpeg 2>nul', { timeout: 2000 }).toString().trim().split('\n')[0].trim();
+    if (sys && existsSync(sys)) return sys;
+  } catch {}
+  return ffmpegStatic;
+}
+const ffmpegPath = resolveFfmpeg();
 
 const __dirname   = dirname(fileURLToPath(import.meta.url));
 const BIN_DIR     = join(__dirname, '..', '..', '..', 'bin');
@@ -88,27 +98,31 @@ export class YtDlpDownloader {
   }
 
   async _run(videoId, title, resolve, reject) {
-    const outputPath  = join(TEMP_DIR, `${videoId}.mp3`);
-    const ytdlpBin    = findYtDlp();
-    const videoUrl    = `https://www.youtube.com/watch?v=${videoId}`;
-    const start       = Date.now();
+    // Use dynamic extension — yt-dlp picks best available audio (webm/m4a/mp4)
+    // @discordjs/voice decodes any format via ffmpeg internally
+    const outputTemplate = join(TEMP_DIR, `${videoId}.%(ext)s`);
+    const ytdlpBin       = findYtDlp();
+    const videoUrl       = `https://www.youtube.com/watch?v=${videoId}`;
+    const start          = Date.now();
 
     // Build cookie args
     const cookieArgs = await this._buildCookieArgs();
 
+    const ffmpegArgs = ffmpegPath ? ['--ffmpeg-location', ffmpegPath] : [];
+
     const args = [
       '--no-playlist',
       '--no-warnings',
-      '-x',
-      '--audio-format', 'mp3',
-      '--audio-quality', '5',          // VBR ~128kbps — good balance
-      '--ffmpeg-location', ffmpegPath,
-      '-o', outputPath,
+      // Best audio — no conversion needed, avoids "format not available" error
+      '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+      '--no-post-overwrites',
+      ...ffmpegArgs,
+      '-o', outputTemplate,
       ...cookieArgs,
-      '--', videoUrl                   // '--' prevents URL being interpreted as flag
+      '--', videoUrl
     ];
 
-    logger.debug(`[YtDlpDownloader] Starting: "${title}" → ${outputPath}`);
+    logger.debug(`[YtDlpDownloader] Starting: "${title}" [${videoId}]`);
 
     let stderr = '';
     const proc = spawn(ytdlpBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -135,13 +149,20 @@ export class YtDlpDownloader {
         return reject(new Error(errMsg));
       }
 
-      if (!existsSync(outputPath)) {
-        return reject(new Error(`yt-dlp exited 0 but output file missing: ${outputPath}`));
+      // Find the actual downloaded file (extension is dynamic)
+      let actualFile = null;
+      try {
+        const files = readdirSync(TEMP_DIR).filter(f => f.startsWith(videoId + '.'));
+        if (files.length > 0) actualFile = join(TEMP_DIR, files[0]);
+      } catch {}
+
+      if (!actualFile || !existsSync(actualFile)) {
+        return reject(new Error(`yt-dlp exited 0 but no output file found for ${videoId} in ${TEMP_DIR}`));
       }
 
       const ms = Date.now() - start;
-      logger.info(`[YtDlpDownloader] Downloaded in ${ms}ms: "${title}" → ${outputPath}`);
-      resolve(outputPath);
+      logger.info(`[YtDlpDownloader] Downloaded in ${ms}ms: "${title}" → ${actualFile}`);
+      resolve(actualFile);
     });
 
     proc.on('error', (err) => {
