@@ -9,8 +9,11 @@ import { logger } from '../utils/logger.js';
 // Load environment variables
 dotenv.config();
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const DEFAULT_SUPABASE_URL = 'https://oounfyxmkyjrfkggydum.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vdW5feXhta3lqcmZrZ2d5ZHVtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NTk2NTMxNSwiZXhwIjoyMTAxNTQxMzE1fQ.3JOidd_6-3gyvYIv_-SU1ViMcYzvLxNgWMDjlEnhodI';
+
+const supabaseUrl = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || DEFAULT_SUPABASE_KEY;
 
 if (!supabaseUrl || !supabaseServiceRoleKey) {
   logger.error('[Supabase] CRITICAL ERROR: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment variables!');
