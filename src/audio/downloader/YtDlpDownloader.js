@@ -98,84 +98,98 @@ export class YtDlpDownloader {
   }
 
   async _run(videoId, title, resolve, reject) {
-    // Use dynamic extension — yt-dlp picks best available audio (webm/m4a/mp4)
-    // @discordjs/voice decodes any format via ffmpeg internally
     const outputTemplate = join(TEMP_DIR, `${videoId}.%(ext)s`);
     const ytdlpBin       = findYtDlp();
     const videoUrl       = `https://www.youtube.com/watch?v=${videoId}`;
     const start          = Date.now();
 
-    // Build cookie args
+    const ffmpegArgs = ffmpegPath ? ['--ffmpeg-location', ffmpegPath] : [];
     const cookieArgs = await this._buildCookieArgs();
 
-    const ffmpegArgs = ffmpegPath ? ['--ffmpeg-location', ffmpegPath] : [];
+    // Helper to spawn yt-dlp process
+    const executeYtDlp = (useCookies) => {
+      return new Promise((res, rej) => {
+        const cArgs = useCookies ? cookieArgs : [];
+        const args = [
+          '--no-playlist',
+          '--no-warnings',
+          '--js-runtimes', 'node',
+          '--extractor-args', 'youtube:player_client=android,web,tv',
+          '-f', 'ba/b',
+          '--no-post-overwrites',
+          ...ffmpegArgs,
+          '-o', outputTemplate,
+          ...cArgs,
+          '--', videoUrl
+        ];
 
-    const args = [
-      '--no-playlist',
-      '--no-warnings',
-      '--js-runtimes', 'node',
-      '-f', 'ba/b',
-      '--no-post-overwrites',
-      ...ffmpegArgs,
-      '-o', outputTemplate,
-      ...cookieArgs,
-      '--', videoUrl
-    ];
+        logger.debug(`[YtDlpDownloader] Starting (cookies=${useCookies}): "${title}" [${videoId}]`);
 
-    logger.debug(`[YtDlpDownloader] Starting: "${title}" [${videoId}]`);
+        let stderr = '';
+        const proc = spawn(ytdlpBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    let stderr = '';
-    const proc = spawn(ytdlpBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        proc.stderr.on('data', chunk => {
+          const line = chunk.toString().trim();
+          if (line) {
+            stderr += line + '\n';
+            logger.debug(`[yt-dlp] ${line}`);
+          }
+        });
 
-    proc.stderr.on('data', chunk => {
-      const line = chunk.toString().trim();
-      if (line) {
-        stderr += line + '\n';
-        logger.debug(`[yt-dlp] ${line}`);
-      }
-    });
+        proc.stdout.on('data', chunk => {
+          const line = chunk.toString().trim();
+          if (line) logger.debug(`[yt-dlp] ${line}`);
+        });
 
-    proc.stdout.on('data', chunk => {
-      const line = chunk.toString().trim();
-      if (line) logger.debug(`[yt-dlp] ${line}`);
-    });
+        proc.on('close', (code) => {
+          if (code !== 0) {
+            return rej(new Error(stderr.slice(-500) || `yt-dlp exited with code ${code}`));
+          }
+          // Find actual output file
+          let actualFile = null;
+          try {
+            const files = readdirSync(TEMP_DIR).filter(f => f.startsWith(videoId + '.'));
+            if (files.length > 0) actualFile = join(TEMP_DIR, files[0]);
+          } catch {}
 
-    proc.on('close', (code) => {
+          if (!actualFile || !existsSync(actualFile)) {
+            return rej(new Error(`yt-dlp exited 0 but no output file found for ${videoId}`));
+          }
+          res(actualFile);
+        });
+
+        proc.on('error', (err) => rej(err));
+      });
+    };
+
+    try {
+      // Primary attempt (with cookies if available)
+      const downloadedFile = await executeYtDlp(cookieArgs.length > 0);
       this._dequeue();
-
-      if (code !== 0) {
-        const errMsg = stderr.slice(-500) || `yt-dlp exited with code ${code}`;
-        logger.warn(`[YtDlpDownloader] Failed (code ${code}): "${title}"`);
-        return reject(new Error(errMsg));
-      }
-
-      // Find the actual downloaded file (extension is dynamic)
-      let actualFile = null;
-      try {
-        const files = readdirSync(TEMP_DIR).filter(f => f.startsWith(videoId + '.'));
-        if (files.length > 0) actualFile = join(TEMP_DIR, files[0]);
-      } catch {}
-
-      if (!actualFile || !existsSync(actualFile)) {
-        return reject(new Error(`yt-dlp exited 0 but no output file found for ${videoId} in ${TEMP_DIR}`));
-      }
-
       const ms = Date.now() - start;
-      logger.info(`[YtDlpDownloader] Downloaded in ${ms}ms: "${title}" → ${actualFile}`);
-      resolve(actualFile);
-    });
-
-    proc.on('error', (err) => {
-      this._dequeue();
-      if (err.code === 'ENOENT') {
-        reject(new Error(
-          `yt-dlp binary not found at "${ytdlpBin}". ` +
-          `Run: node postinstall.js`
-        ));
+      logger.info(`[YtDlpDownloader] Downloaded in ${ms}ms: "${title}" → ${downloadedFile}`);
+      resolve(downloadedFile);
+    } catch (firstErr) {
+      // If primary failed and we used cookies, retry ONCE without cookies using android/web/tv clients
+      if (cookieArgs.length > 0) {
+        logger.warn(`[YtDlpDownloader] Cookie attempt failed ("${firstErr.message}"). Retrying without cookies...`);
+        try {
+          const downloadedFile = await executeYtDlp(false);
+          this._dequeue();
+          const ms = Date.now() - start;
+          logger.info(`[YtDlpDownloader] Fallback download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
+          return resolve(downloadedFile);
+        } catch (secondErr) {
+          this._dequeue();
+          logger.warn(`[YtDlpDownloader] Fallback attempt also failed: "${secondErr.message}"`);
+          return reject(secondErr);
+        }
       } else {
-        reject(err);
+        this._dequeue();
+        logger.warn(`[YtDlpDownloader] Download failed: "${firstErr.message}"`);
+        return reject(firstErr);
       }
-    });
+    }
   }
 
   async _buildCookieArgs() {
