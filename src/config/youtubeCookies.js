@@ -1,74 +1,80 @@
+/**
+ * YouTube session cookies — updated 2026-08-10
+ * Source: Cookie-Editor JSON export from authenticated Chrome session.
+ *
+ * Used by:
+ *   - CookieManager as local fallback
+ *   - ytdl-core-enhanced via ytdl.createAgent(USER_YOUTUBE_COOKIES)
+ */
 export const USER_YOUTUBE_COOKIES = [
   {
-    domain: ".youtube.com",
     name: "__Secure-3PSID",
-    path: "/",
-    value: "g.a000BAk1F72C1rWPFdaVyNm86jVB69FpL0r3OrgAyBqQrF--p-jZHe2nQS2XB3PbpOcTDPwr_AACgYKATwSARYSFQHGX2MiyLKhXges5YKHuk3qF64D5RoVAUF8yKp8F2p4QDqmn9CdZgxEy8VW0076"
+    value: "g.a000BAkN_ylCXlPCGYkf8vLtB4Wvj9-A7wwFz4F1fyiqZsWt5qAKnHr2W3IS3qGZxQJim3KJiAACgYKATQSARASFQHGX2MifIcat6c5lZdHtiec4Y7p7BoVAUF8yKpaEvF7kgtvPIrtxc665vir0076",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-1PSIDTS",
-    path: "/",
-    value: "sidts-CjUBPWEu2ehWIYn-hTqqSsMSoHBawJYt1wiUxURalWg22WD0YPdfz4jbd9aV6_DGle8OQCrpHBAA"
+    value: "sidts-CjQBPWEu2eMzpEZpMm-2jrwWd4Fyd6NcAjNaRAdTnKM0ieQkoLZAEZi9rQtNfsO582qsCf07EAA",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "SAPISID",
-    path: "/",
-    value: "FRlk3kulhR4Vpffq/AJoT9WLu1m8x6P4Ql"
+    value: "hKuhXh_BPzd8C_tQ/AvPmuLlfFjVkRnhtp",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: false
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-1PSIDCC",
-    path: "/",
-    value: "AKEyXzUGqx22kyG3XK3NPmqQPVaeh21sWlM9DRDe7WIENjwyJMS_cnybV-xojAA1a829EFo09A"
+    value: "AKEyXzUZ8c_NHSLwFvOdtqYL944I42OvxKgqeEXRTtRgz9PIW_3TlGe58DpvmJmujAafLYBRYyY",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "SSID",
-    path: "/",
-    value: "A6n6b8y5y4-Gv6tB5"
+    value: "AgjEVDCBScJylKJxm",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
+    name: "wide",
+    value: "1",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: false
+  },
+  {
     name: "__Secure-1PAPISID",
-    path: "/",
-    value: "FRlk3kulhR4Vpffq/AJoT9WLu1m8x6P4Ql"
+    value: "hKuhXh_BPzd8C_tQ/AvPmuLlfFjVkRnhtp",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: false
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-1PSID",
-    path: "/",
-    value: "g.a000BAk1F72C1rWPFdaVyNm86jVB69FpL0r3OrgAyBqQrF--p-jZHe2nQS2XB3PbpOcTDPwr_AACgYKAVYSAQASFQHGX2MidEwB7l7dF46-7782qQ-1ZBoVAUF8yKqaN20w1w8vX7c-Z_c9-YhY0076"
+    value: "g.a000BAkN_ylCXlPCGYkf8vLtB4Wvj9-A7wwFz4F1fyiqZsWt5qAK1U4rgshcXSMMfB0M80DK9gACgYKAaESARASFQHGX2Miu9QNPAg-MNQyOB-D-hSHfhoVAUF8yKpZ3UIhb1KOXZjDzDthDAv90076",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-3PAPISID",
-    path: "/",
-    value: "FRlk3kulhR4Vpffq/AJoT9WLu1m8x6P4Ql"
+    value: "hKuhXh_BPzd8C_tQ/AvPmuLlfFjVkRnhtp",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: false
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-3PSIDCC",
-    path: "/",
-    value: "AKEyXzUqgGZ9e7kH2144nQJmUjR3mKz8qWp10rZ6x5y4v3u2t1s0"
+    value: "AKEyXzWykxWirO3faHvLvU2nyGYrVtfaIiqM09vA_kUpUgzat8UlAfR02p3T1CRFM-V-p54P0-E",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "__Secure-3PSIDTS",
-    path: "/",
-    value: "sidts-CjUBPWEu2ehWIYn-hTqqSsMSoHBawJYt1wiUxURalWg22WD0YPdfz4jbd9aV6_DGle8OQCrpHBAA"
+    value: "sidts-CjQBPWEu2eMzpEZpMm-2jrwWd4Fyd6NcAjNaRAdTnKM0ieQkoLZAEZi9rQtNfsO582qsCf07EAA",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
+    name: "__Secure-BUCKET",
+    value: "CM8C",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
+  },
+  {
     name: "LOGIN_INFO",
-    path: "/",
-    value: "AFmmF2swRQIhAMPB63EwIRIglCMZ8ITiUnqc9SKDuoYVplXOt4TMfHt7AiBVXEH0zHR7heWinpOt-n9p2U9lByQA01ETjHsbUrrDjQ:QUQ3MjNmeHNRbmRObTdEU3d1b3c3UHJqbFVuWmxKX3pfY2dRd0hxdjVFWjIzSDhkbUVBd1pWaHRQMFBtMC1GMFJGTkNYcDhnb1dpLU5WalRBc0VseGZJMFlRRlRCT09QV3VqYU44OXViSHJGVlFHQlJ2dlQwVldUbmNENWpjdGY3Skk5dUtkQ2RJMGloVU1zSmcwQkw4UnJJS19SSzU3d1dn"
+    value: "AFmmF2swRAIgXVL69SXx9UycEVJNvHN99YgguzmdGZbSL0cl5WpZQuwCIAqf_XMZcC_L9qu1wzhqoIsUuTCk_LGMUxmsnKeEoUpp:QUQ3MjNmdzJfbndtOXdwZTVROFZIdlRwekl6Q3lEcUJ3UG1qNGc0T2RGZWRpemRkUkpaLTFscnBVNEx2OEE4U3gzOE9ScE0xVnV5a0VXdXhyNDFONXFzODNuX01LZlJkWVBYVVpkRW9hSnpLQlMzeUFfa3IydDNMTXlRcW9WU3VxLW5SLUtiaklyTlpNTTVyOFA4RUt4NUhwUHNRU3FneVVR",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: true
   },
   {
-    domain: ".youtube.com",
     name: "PREF",
-    path: "/",
-    value: "f6=40000000&tz=Asia.Baghdad"
+    value: "tz=Asia.Baghdad&f6=40000000&f7=100&f5=20000&f4=4010000",
+    domain: ".youtube.com", path: "/", secure: true, httpOnly: false
   }
 ];
