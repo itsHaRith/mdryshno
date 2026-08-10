@@ -16,12 +16,11 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/down
 # Set working directory
 WORKDIR /app
 
-# Copy package files and install production dependencies
-COPY package*.json ./
-RUN npm ci --only=production
-
-# Copy application source code
+# Copy application source code (including postinstall.js)
 COPY . .
+
+# Install production dependencies (runs postinstall.js successfully)
+RUN npm ci --only=production
 
 # Ensure temp directory exists
 RUN mkdir -p temp bin
