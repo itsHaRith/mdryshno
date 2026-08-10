@@ -88,23 +88,35 @@ export class BotInstance {
       // Only respond in this bot's guild
       if (message.guild.id !== this.config.guild_id) return;
 
-      // Only allow commands in the command channel OR the voice channel text chat
-      const allowedChannels = ['1457834089133637632', this.config.voice_channel_id];
-      if (!allowedChannels.includes(message.channel.id)) return;
-
-      // User must be in the same voice channel as the bot
-      const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
-      const userVoiceChannelId = member?.voice?.channelId;
-      if (userVoiceChannelId !== this.config.voice_channel_id) return;
-
-      logger.debug(`[BotInstance:${this.config.bot_name}] Command: "${message.content}"`);
-
+      // Check prefix first
       const content = message.content.trim();
       const prefix  = await getPrefix(this.config.id, this.config.prefix);
       if (!content.startsWith(prefix)) return;
 
       const args    = content.slice(prefix.length).trim().split(/ +/);
-      const command = args.shift().toLowerCase();
+      const command = args.shift()?.toLowerCase();
+      if (!command) return;
+
+      // Check if command is recognized
+      const isPlayCmd = ['play', 'p', 'ش', 'تشغيل', 'شغل'].includes(command);
+      const isSkipCmd = ['skip', 's', 'س', 'سكب', 'سكيب'].includes(command);
+      const isPauseCmd = ['pause', 't', 'ت', 'ايقاف', 'مؤقت'].includes(command);
+
+      if (!isPlayCmd && !isSkipCmd && !isPauseCmd) return;
+
+      // User must be in the same voice channel as the bot
+      const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
+      const userVoiceChannelId = member?.voice?.channelId;
+
+      if (!userVoiceChannelId) {
+        return message.reply(`❌ يرجى الانضمام إلى الروم الصوتي **#${this.config.bot_name}** لاستخدام البوت.`);
+      }
+
+      if (userVoiceChannelId !== this.config.voice_channel_id) {
+        return; // User is in another bot's voice channel — ignore so only the correct bot responds
+      }
+
+      logger.info(`[BotInstance:${this.config.bot_name}] Executing command: "${message.content}"`);
 
       // ── !play / !ش ──────────────────────────────────────────────────
       if (command === 'play' || command === 'p' || command === 'ش') {
