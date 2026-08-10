@@ -1,22 +1,15 @@
 /**
- * AudioManager  (v2 — new architecture)
+ * AudioManager  (v3 — yt-dlp download-first)
  *
- * Public API is IDENTICAL to v1 so botInstance.js requires zero changes.
+ * Flow:
+ *   !play أغنية
+ *     → SearchEngine finds videoId
+ *     → ExtractionEngine.extract() downloads temp/{videoId}.mp3 via yt-dlp
+ *     → createAudioResource(fs.createReadStream(tempFile))
+ *     → audioPlayer.play(resource)
+ *     → [Idle] → ExtractionEngine.cleanup(tempFile) deletes the file
  *
- * Internals delegate to the new modular pipeline:
- *   trackResolver  → converts any user input to Track[]
- *   extractionEngine → three-tier authenticated stream extraction
- *   @discordjs/voice → AudioPlayer + VoiceConnection (unchanged)
- *
- * What changed vs v1:
- *   ✓ Cookie handling moved to CookieManager (Supabase → local fallback)
- *   ✓ Search moved to SearchEngine (Innertube primary, play-dl protected fallback)
- *   ✓ Extraction moved to ExtractionEngine (ytdl agent-correct → Innertube → play-dl)
- *   ✓ ytdl agent passed via options.agent — eliminates "old cookie format" warning
- *   ✓ ytdl.setPoTokenAndVisitorData() called on every extraction with fresh values
- *   ✓ On bot-check/403 → cookie cache invalidated, Innertube client reset, then retry
- *   ✓ No global mutable auth state scattered across the file
- *   ✓ No raw console.* calls — all through logger
+ * Public API is IDENTICAL to v2/v1 — botInstance.js needs zero changes.
  */
 
 import {
@@ -24,40 +17,42 @@ import {
   createAudioPlayer,
   AudioPlayerStatus,
   VoiceConnectionStatus,
-  entersState,
-  getVoiceConnection
+  entersState
 } from '@discordjs/voice';
 
-import { trackResolver }    from './audio/resolver/TrackResolver.js';
-import { extractionEngine } from './audio/extraction/ExtractionEngine.js';
-import { buildPlayerDashboard } from './uiBuilder.js';
-import { logger }           from './utils/logger.js';
+import { trackResolver }                   from './audio/resolver/TrackResolver.js';
+import { extractionEngine, ExtractionEngine } from './audio/extraction/ExtractionEngine.js';
+import { buildPlayerDashboard }            from './uiBuilder.js';
+import { logger }                          from './utils/logger.js';
 
 export class AudioManager {
   constructor(client, botConfig) {
-    this.client        = client;
-    this.botConfig     = botConfig;
-    this.guildId       = botConfig.guild_id;
+    this.client         = client;
+    this.botConfig      = botConfig;
+    this.guildId        = botConfig.guild_id;
     this.voiceChannelId = botConfig.voice_channel_id;
     this.textChannelId  = botConfig.text_channel_id;
 
-    this.queue         = [];
-    this.currentTrack  = null;
-    this.volume        = 100;
-    this.loopMode      = 'none'; // 'none' | 'track' | 'queue'
-    this.isPaused      = false;
+    this.queue          = [];
+    this.currentTrack   = null;
+    this.volume         = 100;
+    this.loopMode       = 'none'; // 'none' | 'track' | 'queue'
+    this.isPaused       = false;
 
-    this.voiceConnection  = null;
-    this.audioPlayer      = null;
-    this.audioResource    = null;
-    this.dashboardMessage = null;
+    this.voiceConnection   = null;
+    this.audioPlayer       = null;
+    this.audioResource     = null;
+    this.dashboardMessage  = null;
     this.dashboardInterval = null;
+
+    // Track the current temp file so we can delete it after playback
+    this._currentTempFile = null;
 
     this._initPlayer();
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Player initialisation
+  // Player init
   // ─────────────────────────────────────────────────────────────────────
 
   _initPlayer() {
@@ -80,12 +75,17 @@ export class AudioManager {
 
     this.audioPlayer.on(AudioPlayerStatus.Idle, () => {
       this._stopDashboardUpdates();
+      // Delete temp file before starting next track
+      ExtractionEngine.cleanup(this._currentTempFile);
+      this._currentTempFile = null;
       this._onTrackEnd();
     });
 
     this.audioPlayer.on('error', err => {
       logger.error(`[AudioPlayer:${this.botConfig.bot_name}] Error: ${err.message}`);
       this._stopDashboardUpdates();
+      ExtractionEngine.cleanup(this._currentTempFile);
+      this._currentTempFile = null;
       this._onTrackEnd();
     });
   }
@@ -104,7 +104,7 @@ export class AudioManager {
       const guild = channel.guild;
       const me    = guild.members.me ?? await guild.members.fetch(this.client.user.id).catch(() => null);
 
-      // Reuse if already connected to the same channel and healthy
+      // Reuse healthy connection
       if (
         this.voiceConnection &&
         this.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed &&
@@ -115,7 +115,7 @@ export class AudioManager {
         return;
       }
 
-      // Disconnect ghost session if we're in a different channel
+      // Disconnect ghost session
       if (me?.voice?.channelId && me.voice.channelId !== this.voiceChannelId) {
         await me.voice.disconnect().catch(() => {});
         await new Promise(r => setTimeout(r, 800));
@@ -137,12 +137,12 @@ export class AudioManager {
         logger.error(`[VoiceConn:${this.botConfig.bot_name}] ${err.message}`);
       });
 
-      // Auto-reconnect on disconnect (network blips)
+      // Auto-reconnect on network blips
       this.voiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
         try {
           await Promise.race([
-            entersState(this.voiceConnection, VoiceConnectionStatus.Signalling,  5_000),
-            entersState(this.voiceConnection, VoiceConnectionStatus.Connecting,  5_000)
+            entersState(this.voiceConnection, VoiceConnectionStatus.Signalling, 5_000),
+            entersState(this.voiceConnection, VoiceConnectionStatus.Connecting, 5_000)
           ]);
         } catch {
           this.destroy();
@@ -157,15 +157,9 @@ export class AudioManager {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Public play() entry point  (called by botInstance.js)
+  // play() — public entry point
   // ─────────────────────────────────────────────────────────────────────
 
-  /**
-   * Resolve `query`, enqueue resolved tracks, start playback if idle.
-   * @param {string} query        User input (URL or search text)
-   * @param {string} requesterTag Discord user tag
-   * @returns {{ success: boolean, count?: number, tracks?: Track[], error?: string }}
-   */
   async play(query, requesterTag) {
     if (!this.voiceConnection) {
       await this.connect();
@@ -212,29 +206,31 @@ export class AudioManager {
       return this._onTrackEnd();
     }
 
-    // Stop current player resource cleanly (don't trigger Idle → _onTrackEnd)
+    // Stop current cleanly without triggering _onTrackEnd again
     if (this.audioPlayer) {
       this.audioPlayer.stop(true);
     }
 
-    logger.debug(`[AudioManager:${this.botConfig.bot_name}] Extracting: "${this.currentTrack.title}" [${this.currentTrack.id}]`);
+    logger.info(`[AudioManager:${this.botConfig.bot_name}] ⬇ Downloading: "${this.currentTrack.title}" [${this.currentTrack.id}]`);
     const start = Date.now();
 
     try {
-      const resource = await extractionEngine.extract(
+      const { resource, tempFile } = await extractionEngine.extract(
         this.currentTrack.id,
         this.currentTrack.title
       );
 
-      this.audioResource = resource;
+      this._currentTempFile = tempFile;
+      this.audioResource    = resource;
       this.audioPlayer.play(resource);
       await this.updateDashboard(true);
 
-      logger.info(`[AudioManager:${this.botConfig.bot_name}] Playback started in ${Date.now() - start}ms: "${this.currentTrack.title}"`);
+      logger.info(`[AudioManager:${this.botConfig.bot_name}] ▶ Playing in ${Date.now() - start}ms: "${this.currentTrack.title}"`);
     } catch (err) {
-      logger.error(`[AudioManager:${this.botConfig.bot_name}] Extraction failed: ${err.message}`);
-      // Skip to next track automatically
-      this._onTrackEnd();
+      logger.error(`[AudioManager:${this.botConfig.bot_name}] Download failed: ${err.message}`);
+      ExtractionEngine.cleanup(this._currentTempFile);
+      this._currentTempFile = null;
+      this._onTrackEnd(); // skip to next
     }
   }
 
@@ -248,7 +244,7 @@ export class AudioManager {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Controls  (unchanged signatures — botInstance.js calls these)
+  // Controls
   // ─────────────────────────────────────────────────────────────────────
 
   pause() {
@@ -269,7 +265,7 @@ export class AudioManager {
 
   skip() {
     if (this.audioPlayer) {
-      this.audioPlayer.stop(); // Triggers Idle → _onTrackEnd → next track
+      this.audioPlayer.stop(); // → Idle → _onTrackEnd → next track
       return true;
     }
     return false;
@@ -279,6 +275,8 @@ export class AudioManager {
     this.queue        = [];
     this.currentTrack = null;
     if (this.audioPlayer) this.audioPlayer.stop(true);
+    ExtractionEngine.cleanup(this._currentTempFile);
+    this._currentTempFile = null;
     this.deleteDashboard();
     return true;
   }

@@ -6,3 +6,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
+
+# yt-dlp binary (downloaded by postinstall.js)
+bin/
+
+# Temporary downloaded audio files
+temp/

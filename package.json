@@ -5,7 +5,8 @@
   "main": "src/botMaster.js",
   "type": "module",
   "scripts": {
-    "start": "node src/botMaster.js"
+    "start": "node src/botMaster.js",
+    "postinstall": "node postinstall.js"
   },
   "engines": {
     "node": ">=20.0.0"
