@@ -158,12 +158,26 @@ export class YtDlpDownloader {
   }
 
   async _buildCookieArgs() {
-    // If a cookie file path is specified directly in env, use it
+    // Priority 1: explicit cookie file path
     if (process.env.YTDLP_COOKIE_FILE && existsSync(process.env.YTDLP_COOKIE_FILE)) {
       return ['--cookies', process.env.YTDLP_COOKIE_FILE];
     }
 
-    // Try to build a Netscape-format cookie file from CookieManager
+    // Priority 2: YOUTUBE_COOKIE env var (cookie header string from .env / Replit Secrets)
+    const envCookie = process.env.YOUTUBE_COOKIE;
+    if (envCookie && envCookie.length > 20) {
+      try {
+        const netscape = this._cookieStringToNetscape(envCookie);
+        if (netscape) {
+          const tmpPath = join(TEMP_DIR, 'yt_cookies.txt');
+          writeFileSync(tmpPath, netscape, 'utf8');
+          logger.debug('[YtDlpDownloader] Using YOUTUBE_COOKIE env var for authentication.');
+          return ['--cookies', tmpPath];
+        }
+      } catch {}
+    }
+
+    // Priority 3: CookieManager (Supabase → youtubeCookies.js)
     try {
       const cookieStr = await cookieManager.getCookieString();
       if (!cookieStr || cookieStr.length < 20) return [];
@@ -178,6 +192,7 @@ export class YtDlpDownloader {
     } catch {
       return [];
     }
+
   }
 
   /** Convert "name=value; name2=value2" → Netscape cookie file format */
