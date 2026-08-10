@@ -73,7 +73,7 @@ export class ExtractionEngine {
       }
     }
 
-    // ── Tier 3: play-dl → download stream to file ─────────────────────
+    // ── Tier 3: play-dl YouTube stream ───────────────────────────────
     if (!tempFile) {
       try {
         logger.debug(`[ExtractionEngine] Tier 3 (play-dl file pipe): "${title}" [${videoId}]`);
@@ -88,7 +88,38 @@ export class ExtractionEngine {
         }
       } catch (err) {
         lastErr = err;
-        logger.error(`[ExtractionEngine] Tier 3 (play-dl) failed: ${err.message}`);
+        logger.warn(`[ExtractionEngine] Tier 3 (play-dl) failed: ${err.message}. Trying Tier 4 (SoundCloud)...`);
+      }
+    }
+
+    // ── Tier 4: SoundCloud Fallback (Bypasses YouTube Cloud IP Block) ──
+    if (!tempFile) {
+      try {
+        const query = title || videoId;
+        logger.debug(`[ExtractionEngine] Tier 4 (SoundCloud fallback): Searching "${query}"`);
+
+        // Ensure SoundCloud client ID is active
+        try {
+          const clientID = await play.getFreeClientID();
+          await play.setToken({ soundcloud: { client_id: clientID } });
+        } catch {}
+
+        const scResults = await play.search(query, { source: { soundcloud: 'tracks' }, limit: 1 });
+        if (scResults && scResults[0]?.url) {
+          logger.info(`[ExtractionEngine] SoundCloud resolved: "${scResults[0].title}"`);
+          const scStream   = await play.stream(scResults[0].url);
+          const outPath    = join(TEMP_DIR, `${videoId}.webm`);
+          const fileWriter = createWriteStream(outPath);
+
+          await pipeline(scStream.stream, fileWriter);
+          if (existsSync(outPath)) {
+            tempFile = outPath;
+            logger.info(`[ExtractionEngine] Tier 4 (SoundCloud) saved to file in ${Date.now() - start}ms: "${scResults[0].title}"`);
+          }
+        }
+      } catch (err) {
+        lastErr = err;
+        logger.error(`[ExtractionEngine] Tier 4 (SoundCloud) failed: ${err.message}`);
       }
     }
 
