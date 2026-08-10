@@ -110,12 +110,30 @@ export class YtDlpDownloader {
     const executeYtDlp = (useCookies) => {
       return new Promise((res, rej) => {
         const cArgs = (useCookies && cookieArgs.length > 0) ? cookieArgs : [];
+        // 1. Proxy support
+        const proxyUrl = process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY;
+        const proxyArgs = proxyUrl ? ['--proxy', proxyUrl] : [];
+
+        // 2. OAuth2 support
+        const oauthArgs = process.env.YTDLP_USE_OAUTH2 === 'true'
+          ? ['--username', 'oauth2', '--password', '']
+          : [];
+
+        // 3. PO Token support
+        const poToken = process.env.YOUTUBE_PO_TOKEN;
+        const poTokenArgs = poToken
+          ? ['--extractor-args', `youtube:po_token=web.gvs+${poToken}`]
+          : [];
+
         const args = [
           '--no-playlist',
           '--no-warnings',
           '--js-runtimes', 'node',
           '-f', 'ba/b',
           '--no-post-overwrites',
+          ...proxyArgs,
+          ...oauthArgs,
+          ...poTokenArgs,
           ...ffmpegArgs,
           '-o', outputTemplate,
           ...cArgs,

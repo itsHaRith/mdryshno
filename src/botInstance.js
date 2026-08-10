@@ -33,10 +33,7 @@ export class BotInstance {
     this.client.once(Events.ClientReady, async () => {
       logger.info(`[BotInstance] ✅ Bot connected: ${this.client.user.tag} | Bot: ${this.config.bot_name}`);
 
-      // 1. Rename voice channel to match bot name
-      await this._syncVoiceChannelName();
-
-      // 2. Connect to voice
+      // Connect to voice channel
       this.audioManager = new AudioManager(this.client, this.config);
       await this.audioManager.connect();
 
@@ -71,33 +68,7 @@ export class BotInstance {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // Rename voice channel to match bot_name
-  // ─────────────────────────────────────────────────────────────────────
 
-  async _syncVoiceChannelName() {
-    const desiredName = this.config.bot_name;
-    if (!desiredName || !this.config.voice_channel_id) return;
-
-    try {
-      const channel = await this.client.channels.fetch(this.config.voice_channel_id);
-      if (!channel?.isVoiceBased()) return;
-
-      if (channel.name === desiredName) {
-        logger.debug(`[BotInstance] Voice channel name already matches: "${desiredName}"`);
-        return;
-      }
-
-      await channel.setName(desiredName);
-      logger.info(`[BotInstance] ✅ Voice channel renamed to: "${desiredName}"`);
-    } catch (err) {
-      // Missing permissions is common — warn but don't crash
-      logger.warn(
-        `[BotInstance] ⚠ Could not rename voice channel to "${desiredName}": ${err.message}\n` +
-        `  → Give the bot "Manage Channels" permission in Discord.`
-      );
-    }
-  }
 
   // ─────────────────────────────────────────────────────────────────────
   // Message handler
