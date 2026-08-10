@@ -181,8 +181,16 @@ export class YtDlpDownloader {
     };
 
     try {
-      // If cookies are provided (e.g. Google One / Premium account), try with cookies first
+      // 1. Primary attempt: clean download (no cookies — works for 99% of public videos via visionos/android_vr)
+      const downloadedFile = await executeYtDlp(false);
+      this._dequeue();
+      const ms = Date.now() - start;
+      logger.info(`[YtDlpDownloader] Clean download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
+      resolve(downloadedFile);
+    } catch (cleanErr) {
+      // 2. Secondary attempt: if clean download failed and cookies are available, try with cookies (for age-restricted/members videos)
       if (cookieArgs.length > 0) {
+        logger.warn(`[YtDlpDownloader] Clean download failed ("${cleanErr.message}"). Retrying with cookies...`);
         try {
           const downloadedFile = await executeYtDlp(true);
           this._dequeue();
@@ -190,20 +198,15 @@ export class YtDlpDownloader {
           logger.info(`[YtDlpDownloader] Cookie download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
           return resolve(downloadedFile);
         } catch (cookieErr) {
-          logger.warn(`[YtDlpDownloader] Cookie attempt failed ("${cookieErr.message}"). Retrying clean without cookies...`);
+          this._dequeue();
+          logger.warn(`[YtDlpDownloader] Cookie download failed: "${cookieErr.message}"`);
+          return reject(cookieErr);
         }
+      } else {
+        this._dequeue();
+        logger.warn(`[YtDlpDownloader] Download failed: "${cleanErr.message}"`);
+        return reject(cleanErr);
       }
-
-      // Fallback or default: clean download (no cookies)
-      const downloadedFile = await executeYtDlp(false);
-      this._dequeue();
-      const ms = Date.now() - start;
-      logger.info(`[YtDlpDownloader] Clean download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
-      resolve(downloadedFile);
-    } catch (cleanErr) {
-      this._dequeue();
-      logger.warn(`[YtDlpDownloader] Download failed: "${cleanErr.message}"`);
-      reject(cleanErr);
     }
   }
 

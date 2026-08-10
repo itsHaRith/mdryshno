@@ -20,17 +20,14 @@ const BINARY    = IS_WIN ? 'yt-dlp.exe' : 'yt-dlp';
 const BIN_PATH  = join(BIN_DIR, BINARY);
 
 const DOWNLOAD_URLS = {
-  win32:  'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe',
-  linux:  'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp',
-  darwin: 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos'
+  win32:  'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.exe',
+  linux:  'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp',
+  darwin: 'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos'
 };
 
 const url = DOWNLOAD_URLS[process.platform] ?? DOWNLOAD_URLS.linux;
 
-if (existsSync(BIN_PATH)) {
-  console.log(`[postinstall] yt-dlp binary already present: ${BIN_PATH}`);
-  process.exit(0);
-}
+
 
 if (!existsSync(BIN_DIR)) mkdirSync(BIN_DIR, { recursive: true });
 
