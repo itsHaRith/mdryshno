@@ -46,7 +46,7 @@ function findYtDlp() {
   return IS_WIN ? 'yt-dlp.exe' : 'yt-dlp'; // hope it's on PATH
 }
 
-class YtDlpDownloader {
+export class YtDlpDownloader {
   constructor() {
     this._active   = 0;
     this._queue    = [];
