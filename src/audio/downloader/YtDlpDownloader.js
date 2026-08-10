@@ -114,7 +114,7 @@ export class YtDlpDownloader {
           '--no-playlist',
           '--no-warnings',
           '--js-runtimes', 'node',
-          '--extractor-args', 'youtube:player_client=android,web,tv',
+          '--extractor-args', 'youtube:player_client=android_vr,web,tv',
           '-f', 'ba/b',
           '--no-post-overwrites',
           ...ffmpegArgs,
