@@ -120,14 +120,27 @@ class InnertubeProvider {
   }
 
   /**
-   * Extract an authenticated audio stream from a video ID.
-   * Returns a ReadableStream (Web Streams API) or throws AudioError.
+   * Extract an audio stream from a video ID.
+   * If the primary client fails (e.g. expired cookies trigger "login required"),
+   * automatically retries with a clean anonymous Innertube instance.
    */
   async extractStream(videoId) {
-    const yt = await this.getClient();
-    // type:'audio' makes Innertube request audio-only formats
-    const stream = await yt.download(videoId, { type: 'audio', quality: 'best' });
-    return stream; // Web ReadableStream — caller converts with Readable.fromWeb()
+    try {
+      const yt = await this.getClient();
+      return await yt.download(videoId, { type: 'audio', quality: 'best' });
+    } catch (err) {
+      if (/login|bot|sign in|403/i.test(err.message)) {
+        logger.warn(`[InnertubeProvider] Authenticated download failed ("${err.message}"). Retrying with clean anonymous client...`);
+        try {
+          const cleanYt = await Innertube.create({ generate_session_locally: true });
+          return await cleanYt.download(videoId, { type: 'audio', quality: 'best' });
+        } catch (cleanErr) {
+          logger.error(`[InnertubeProvider] Anonymous fallback failed: ${cleanErr.message}`);
+          throw cleanErr;
+        }
+      }
+      throw err;
+    }
   }
 }
 

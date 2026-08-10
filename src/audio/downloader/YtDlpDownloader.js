@@ -109,13 +109,11 @@ export class YtDlpDownloader {
     // Helper to spawn yt-dlp process
     const executeYtDlp = (useCookies) => {
       return new Promise((res, rej) => {
-        const cArgs = useCookies ? cookieArgs : [];
+        const cArgs = (useCookies && cookieArgs.length > 0) ? cookieArgs : [];
         const args = [
           '--no-playlist',
           '--no-warnings',
           '--js-runtimes', 'node',
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          '--extractor-args', 'youtube:player_client=android_vr,android_creator,web,tv_embedded',
           '-f', 'ba/b',
           '--no-post-overwrites',
           ...ffmpegArgs,
@@ -124,7 +122,7 @@ export class YtDlpDownloader {
           '--', videoUrl
         ];
 
-        logger.debug(`[YtDlpDownloader] Starting (cookies=${useCookies}): "${title}" [${videoId}]`);
+        logger.debug(`[YtDlpDownloader] Executing (cookies=${useCookies}): "${title}" [${videoId}]`);
 
         let stderr = '';
         const proc = spawn(ytdlpBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -164,31 +162,31 @@ export class YtDlpDownloader {
     };
 
     try {
-      // Primary attempt (with cookies if available)
-      const downloadedFile = await executeYtDlp(cookieArgs.length > 0);
+      // 1. Try clean download first (no cookies — works for 99% of public videos)
+      const downloadedFile = await executeYtDlp(false);
       this._dequeue();
       const ms = Date.now() - start;
-      logger.info(`[YtDlpDownloader] Downloaded in ${ms}ms: "${title}" → ${downloadedFile}`);
+      logger.info(`[YtDlpDownloader] Clean download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
       resolve(downloadedFile);
-    } catch (firstErr) {
-      // If primary failed and we used cookies, retry ONCE without cookies using android/web/tv clients
+    } catch (cleanErr) {
+      // 2. If clean download failed and cookies are available, try with cookies (for age-restricted/members videos)
       if (cookieArgs.length > 0) {
-        logger.warn(`[YtDlpDownloader] Cookie attempt failed ("${firstErr.message}"). Retrying without cookies...`);
+        logger.warn(`[YtDlpDownloader] Clean download failed ("${cleanErr.message}"). Retrying with cookies...`);
         try {
-          const downloadedFile = await executeYtDlp(false);
+          const downloadedFile = await executeYtDlp(true);
           this._dequeue();
           const ms = Date.now() - start;
-          logger.info(`[YtDlpDownloader] Fallback download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
+          logger.info(`[YtDlpDownloader] Cookie download succeeded in ${ms}ms: "${title}" → ${downloadedFile}`);
           return resolve(downloadedFile);
-        } catch (secondErr) {
+        } catch (cookieErr) {
           this._dequeue();
-          logger.warn(`[YtDlpDownloader] Fallback attempt also failed: "${secondErr.message}"`);
-          return reject(secondErr);
+          logger.warn(`[YtDlpDownloader] Cookie download failed: "${cookieErr.message}"`);
+          return reject(cookieErr);
         }
       } else {
         this._dequeue();
-        logger.warn(`[YtDlpDownloader] Download failed: "${firstErr.message}"`);
-        return reject(firstErr);
+        logger.warn(`[YtDlpDownloader] Download failed: "${cleanErr.message}"`);
+        return reject(cleanErr);
       }
     }
   }
